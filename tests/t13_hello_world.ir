@@ -1,3 +1,4 @@
+# NEEDS_LIBC
 # EXPECT 0
 func main i32 {
 block entry

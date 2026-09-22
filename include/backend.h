@@ -3,7 +3,7 @@
 #include <stdio.h>
 #include "ir.h"
 typedef struct TargetDesc TargetDesc;
-struct TargetDesc { const char *name,*triple,*assembler,*obj_ext; uint32_t ptr_size,stack_align; bool little; };
+struct TargetDesc { const char *name,*triple,*assembler,*obj_ext,*linker; uint32_t ptr_size,stack_align; bool little; };
 const TargetDesc *backend_lookup(const char *name);
 int target_emit_dispatch(IRModule*,FILE*,const TargetDesc*);
 int emit_icmp(IRInstr*,FILE*,const TargetDesc*);
@@ -30,6 +30,8 @@ typedef struct TargetRegInfo {
 extern const TargetRegInfo x86_64_reginfo;
 extern const TargetRegInfo arm64_reginfo;
 extern const TargetRegInfo riscv_reginfo;
+extern const TargetRegInfo x86_reginfo;
+extern const TargetRegInfo arm_reginfo;
 
 RegAlloc regalloc_run_target(IRFunc *f, const TargetRegInfo *info);
 const char *regalloc_regname_for(int idx, const TargetRegInfo *info);

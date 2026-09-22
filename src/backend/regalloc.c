@@ -43,6 +43,20 @@ const TargetRegInfo riscv_reginfo = {
     .nregs = 9,
     .n_caller_saved = 4,
 };
+const TargetRegInfo x86_reginfo = {
+    .names = (const char*[]){
+        "%ebx","%esi","%edi"
+    },
+    .nregs = 3,
+    .n_caller_saved = 0,
+};
+const TargetRegInfo arm_reginfo = {
+    .names = (const char*[]){
+        "r4","r5","r6","r7","r8","r9","r10","r11"
+    },
+    .nregs = 8,
+    .n_caller_saved = 0,
+};
 static const TargetRegInfo *g_target = NULL;
 
 const char *regalloc_name(const RegAlloc *ra, int idx){
@@ -305,11 +319,15 @@ static RegAlloc regalloc_run_internal(IRFunc *f){
     /* Sort by start */
     qsort(L.iv, L.n, sizeof(Interval), cmp_iv);
 
+    int nregs = g_target ? g_target->nregs : 9;
+    if(nregs > 16) nregs = 16;
+    int n_caller = g_target ? g_target->n_caller_saved : 4;
+
     /* Register availability: -1 free, else vreg holding it. */
-    int reg_holder[NREG];
-    for(int i=0;i<NREG;i++) reg_holder[i] = -1;
-    int reg_free_until[NREG];
-    for(int i=0;i<NREG;i++) reg_free_until[i] = 0;
+    int reg_holder[16];
+    for(int i=0;i<nregs;i++) reg_holder[i] = -1;
+    int reg_free_until[16];
+    for(int i=0;i<nregs;i++) reg_free_until[i] = 0;
 
     int nassigned = 0, nspills = 0;
 
@@ -317,7 +335,7 @@ static RegAlloc regalloc_run_internal(IRFunc *f){
         Interval *iv = &L.iv[k];
 
         /* Expire: release any register whose held interval ends before iv->start. */
-        for(int r=0;r<NREG;r++){
+        for(int r=0;r<nregs;r++){
             if(reg_holder[r] != -1){
                 Interval *h = NULL;
                 for(int q=0;q<L.n;q++){
@@ -337,10 +355,10 @@ static RegAlloc regalloc_run_internal(IRFunc *f){
         }
 
         /* If this interval crosses a call, it can only use callee-saved regs. */
-        int pool_lo = 0, pool_hi = NREG - 1;
+        int pool_lo = 0, pool_hi = nregs - 1;
         if(iv->crosses_call){
-            pool_lo = NREG - NREG_CALLEE_SAVED;
-            pool_hi = NREG - 1;
+            pool_lo = n_caller;
+            pool_hi = nregs - 1;
         }
 
         /* Try to assign a register. */

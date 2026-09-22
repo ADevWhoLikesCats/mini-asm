@@ -609,6 +609,14 @@ int riscv_emit(IRModule *m, FILE *o, const TargetDesc *t){
             fputs("0\n", o);
         }
     }
+    int has_main = 0;
+    for(uint32_t i=0;i<m->nfuncs;i++) if(!strcmp(m->funcs[i].name,"main")){ has_main=1; break; }
+    if(has_main){
+        fputs(".globl _start\n.type _start, @function\n_start:\n", o);
+        fputs("  call main\n", o);
+        fputs("  li a7, 93\n  ecall\n", o);
+        fputs(".size _start, .-_start\n", o);
+    }
     fputs(".section .note.GNU-stack,\"\",@progbits\n",o);
     return 0;
 }
