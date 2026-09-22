@@ -17,8 +17,43 @@ static const char *PHYS[] = {
 #define NREG_CALLER_SAVED 4   /* first 9 are clobbered by call */
 #define NREG_CALLEE_SAVED 5   /* last 5 survive call */
 
-const char *regalloc_regname(int idx){ return (idx>=0 && idx<NREG) ? PHYS[idx] : NULL; }
-int regalloc_nregs(void){ return NREG; }
+/* Per-target register pools. The defaults match x86_64. */
+const TargetRegInfo x86_64_reginfo = {
+    .names = (const char*[]){
+        "%rsi","%rdi","%r8","%r9",
+        "%rbx","%r12","%r13","%r14","%r15"
+    },
+    .nregs = 9,
+    .n_caller_saved = 4,
+};
+const TargetRegInfo arm64_reginfo = {
+    .names = (const char*[]){
+        "x11","x12","x13","x14",
+        "x19","x20","x21","x22","x23"
+    },
+    .nregs = 9,
+    .n_caller_saved = 4,
+};
+
+static const TargetRegInfo *g_target = NULL;
+
+const char *regalloc_regname(int idx){
+    const TargetRegInfo *info = g_target ? g_target : &x86_64_reginfo;
+    return (idx>=0 && idx<info->nregs) ? info->names[idx] : NULL;
+}
+const char *regalloc_regname_for(int idx, const TargetRegInfo *info){
+    if(!info) info = &x86_64_reginfo;
+    return (idx>=0 && idx<info->nregs) ? info->names[idx] : NULL;
+}
+int regalloc_nregs(void){ return (g_target?g_target:&x86_64_reginfo)->nregs; }
+
+RegAlloc regalloc_run_target(IRFunc *f, const TargetRegInfo *info){
+    const TargetRegInfo *saved = g_target;
+    g_target = info;
+    RegAlloc ra = regalloc_run(f);
+    g_target = saved;
+    return ra;
+}
 
 /* --- Interval bookkeeping --- */
 typedef struct {
