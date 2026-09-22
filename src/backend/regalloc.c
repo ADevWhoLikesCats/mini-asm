@@ -35,7 +35,20 @@ const TargetRegInfo arm64_reginfo = {
     .n_caller_saved = 4,
 };
 
+const TargetRegInfo riscv_reginfo = {
+    .names = (const char*[]){
+        "t2","t3","t4","t5",
+        "s1","s2","s3","s4","s5"
+    },
+    .nregs = 9,
+    .n_caller_saved = 4,
+};
 static const TargetRegInfo *g_target = NULL;
+
+const char *regalloc_name(const RegAlloc *ra, int idx){
+    const TargetRegInfo *info = (ra && ra->info) ? ra->info : &x86_64_reginfo;
+    return (idx>=0 && idx<info->nregs) ? info->names[idx] : NULL;
+}
 
 const char *regalloc_regname(int idx){
     const TargetRegInfo *info = g_target ? g_target : &x86_64_reginfo;
@@ -52,6 +65,7 @@ RegAlloc regalloc_run_target(IRFunc *f, const TargetRegInfo *info){
     g_target = info;
     RegAlloc ra = regalloc_run(f);
     g_target = saved;
+    ra.info = info;
     return ra;
 }
 
@@ -281,6 +295,7 @@ static RegAlloc regalloc_run_internal(IRFunc *f){
         out.nvregs = nvregs;
         out.nspills = nvregs;
         out.nassigned = 0;
+        out.info = g_target;
         out.reg_of = malloc(nvregs * sizeof(int));
         for(int i=0;i<nvregs;i++) out.reg_of[i] = -1;
         free(L.iv);

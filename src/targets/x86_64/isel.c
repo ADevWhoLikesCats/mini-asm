@@ -46,7 +46,7 @@ static const char *op_str(IRInstr *in, int i, const RegAlloc *ra, char *buf){
     }
     int v = in->args[i];
     if(ra && v >= 0 && v < ra->nvregs && ra->reg_of[v] >= 0){
-        const char *r = regalloc_regname(ra->reg_of[v]);
+        const char *r = regalloc_name(ra, ra->reg_of[v]);
         snprintf(buf, 32, "%s", r);
         return buf;
     }
@@ -57,7 +57,7 @@ static const char *op_str(IRInstr *in, int i, const RegAlloc *ra, char *buf){
 /* Operand of a *specific* vreg v (not from args[]). */
 static const char *vop_str(int v, const RegAlloc *ra, char *buf){
     if(ra && v >= 0 && v < ra->nvregs && ra->reg_of[v] >= 0){
-        snprintf(buf, 32, "%s", regalloc_regname(ra->reg_of[v]));
+        snprintf(buf, 32, "%s", regalloc_name(ra, ra->reg_of[v]));
         return buf;
     }
     snprintf(buf, 32, "%d(%%rbp)", vreg_off(v));
@@ -209,7 +209,7 @@ int x86_64_emit(IRModule *m, FILE *o, const TargetDesc *t){
         for(uint32_t p=0;p<f->nparams;p++){
             int pv = PARAM_BASE + (int)p;
             if(pv < ra.nvregs && ra.reg_of[pv] >= 0){
-                const char *r = regalloc_regname(ra.reg_of[pv]);
+                const char *r = regalloc_name(&ra, ra.reg_of[pv]);
                 fprintf(o,"  movq %d(%%rbp), %s\n",vreg_off(pv),r);
             }
         }
@@ -257,7 +257,7 @@ int x86_64_emit(IRModule *m, FILE *o, const TargetDesc *t){
                     const char *a0 = op_str(in,0,&ra,a0b);
                     char dstb[32];
                     const char *dstreg = (in->dst>=0 && ra.reg_of[in->dst]>=0)
-                                         ? regalloc_regname(ra.reg_of[in->dst])
+                                         ? regalloc_name(&ra, ra.reg_of[in->dst])
                                          : SCRATCH1;
 
                     /* Load a0 into dstreg. */
