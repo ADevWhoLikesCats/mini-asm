@@ -153,6 +153,8 @@ int x86_64_emit(IRModule *m, FILE *o, const TargetDesc *t){
         int total=assign_allocas(f,vreg_bytes);
         int framesize=(total+15)&~15;
 
+        RegAlloc ra = regalloc_run(f);
+        regalloc_dump(&ra, f, o);
         fprintf(o,".globl %s\n.type %s, @function\n%s:\n",f->name,f->name,f->name);
         fputs("  pushq %rbp\n  movq %rsp, %rbp\n",o);
         if(framesize)fprintf(o,"  subq $%d, %%rsp\n",framesize);

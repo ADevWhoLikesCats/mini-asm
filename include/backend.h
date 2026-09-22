@@ -10,4 +10,16 @@ int emit_icmp(IRInstr*,FILE*,const TargetDesc*);
 int emit_fcmp(IRInstr*,FILE*,const TargetDesc*);
 int emit_int_math(IRInstr*,FILE*,const TargetDesc*);
 int emit_fp_math(IRInstr*,FILE*,const TargetDesc*);
+typedef struct {
+    int *reg_of;
+    int  nvregs;
+    int  nspills;
+    int  nassigned;
+} RegAlloc;
+
+RegAlloc regalloc_run(IRFunc *f);
+void     regalloc_dump(const RegAlloc *ra, IRFunc *f, FILE *out);
+const char *regalloc_regname(int idx);
+int      regalloc_nregs(void);
+
 #endif

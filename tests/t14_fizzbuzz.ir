@@ -1,0 +1,43 @@
+# EXPECT 0
+func main i32 {
+block entry
+  %i = add i32 0 0
+  br loop
+block loop
+  %n = phi i32 %i entry %n1 next
+  %c = icmp i32 slt %n 20
+  cbr %c body done
+block body
+  %m3 = srem i32 %n 3
+  %m5 = srem i32 %n 5
+  %is3 = icmp i32 eq %m3 0
+  %is5 = icmp i32 eq %m5 0
+  %both = and i32 %is3 %is5
+  cbr %both fb next2
+block fb
+  %fstr = str "FizzBuzz\n"
+  %r0 = call i32 printf(%fstr)
+  br next
+block next2
+  cbr %is3 only3 next3
+block only3
+  %f3 = str "Fizz\n"
+  %r1 = call i32 printf(%f3)
+  br next
+block next3
+  cbr %is5 only5 next4
+block only5
+  %f5 = str "Buzz\n"
+  %r2 = call i32 printf(%f5)
+  br next
+block next4
+  %fmt = str "%d\n"
+  %r3 = call i32 printf(%fmt, %n)
+  br next
+block next
+  %n1 = add i32 %n 1
+  br loop
+block done
+  %z = add i32 0 0
+  ret i32 %z
+}
