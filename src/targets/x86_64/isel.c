@@ -2,6 +2,8 @@
 #include "backend.h"
 #include <stdio.h>
 #include <string.h>
+#include <stdint.h>
+extern double ir_fpimm[];
 
 #define PARAM_BASE 1000
 
@@ -98,6 +100,25 @@ static int assign_allocas(IRFunc *f, int base){
     return cursor;
 }
 
+static int is_fp(IRType *t){return t&&(t->kind==TY_F32||t->kind==TY_F64);}
+static const char *fpsuf(IRType *t){return (t&&t->kind==TY_F32)?"ss":"sd";}
+
+static void load_fp(FILE *o, IRInstr *in, int i, const char *xmm, IRType *ty){
+    if(in->kinds[i]==ARG_FP){
+        uint64_t bits; double d=ir_fpimm[in->args[i]];
+        __builtin_memcpy(&bits,&d,8);
+        fprintf(o,"  movabsq $%llu, %%rax\n  movq %%rax, %s\n",(unsigned long long)bits,xmm);
+    } else if(in->kinds[i]==ARG_IMM){
+        fprintf(o,"  movq $%d, %%rax\n  movq %%rax, %s\n",in->args[i],xmm);
+    } else {
+        fprintf(o,"  movq %d(%%rbp), %s\n",vreg_off(in->args[i]),xmm);
+    }
+    (void)ty;
+}
+static void store_dst_fp(FILE *o, int v, const char *xmm){
+    if(v>=0)fprintf(o,"  movq %s, %d(%%rbp)\n",xmm,vreg_off(v));
+}
+
 static void emit_binop(FILE *o, IRInstr *in){
     int sz=type_size(in->type);
     const char *r0=sz==1?"%al":sz==2?"%ax":sz==4?"%eax":"%rax";
@@ -187,6 +208,35 @@ int x86_64_emit(IRModule *m, FILE *o, const TargetDesc *t){
                         else store_dst(o,in->dst,"%rax");
                         break;
                     }
+                    store_dst(o,in->dst,"%rax");
+                    break;
+                }
+                case OP_FADD: case OP_FSUB: case OP_FMUL: case OP_FDIV: {
+                    const char *suf=fpsuf(in->type);
+                    load_fp(o,in,0,"%xmm0",in->type);
+                    load_fp(o,in,1,"%xmm1",in->type);
+                    const char *mn="add";
+                    if(in->op==OP_FSUB)mn="sub";
+                    else if(in->op==OP_FMUL)mn="mul";
+                    else if(in->op==OP_FDIV)mn="div";
+                    fprintf(o,"  %s%s %%xmm1, %%xmm0\n",mn,suf);
+                    store_dst_fp(o,in->dst,"%xmm0");
+                    break;
+                }
+                case OP_FNEG:
+                    load_fp(o,in,0,"%xmm0",in->type);
+                    fprintf(o,"  movabsq $0x8000000000000000, %%rax\n  movq %%rax, %%xmm1\n  xorpd %%xmm1, %%xmm0\n");
+                    store_dst_fp(o,in->dst,"%xmm0");
+                    break;
+                case OP_FCMP: {
+                    const char *suf=fpsuf(in->type);
+                    load_fp(o,in,0,"%xmm0",in->type);
+                    load_fp(o,in,1,"%xmm1",in->type);
+                    if(!strcmp(suf,"ss"))fputs("  ucomiss %xmm1, %xmm0\n",o);
+                    else fputs("  ucomisd %xmm1, %xmm0\n",o);
+                    /* predicate mapping: oeq,one,olt,ole,ogt,oge,ord,uno */
+                    static const char *cm[]={"sete","setne","setb","setbe","seta","setae","setnp","setp"};
+                    fprintf(o,"  %s %%al\n  movzbq %%al, %%rax\n",cm[in->pred%8]);
                     store_dst(o,in->dst,"%rax");
                     break;
                 }

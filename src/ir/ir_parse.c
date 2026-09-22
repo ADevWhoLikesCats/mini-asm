@@ -86,6 +86,12 @@ static IRType *lookup_ty(const char *n){
     return t;
 }
 
+/* Side table for FP immediates: index stored in args[], bits in fpimm[] */
+#define FP_IMM_MAX 256
+extern double ir_fpimm[FP_IMM_MAX];
+static int fpimm_count=0;
+double ir_fpimm[FP_IMM_MAX];
+
 static int parse_operand(FILE *f, IRInstr *in, int slot){
     char b[64];
     if(!word(f,b,64))return 0;
@@ -94,6 +100,14 @@ static int parse_operand(FILE *f, IRInstr *in, int slot){
         in->kinds[slot]=ARG_VREG;
         if(!strncmp(b+1,"arg",3))in->args[slot]=PARAM_BASE+atoi(b+4);
         else in->args[slot]=atoi(b+1);
+        return 1;
+    }
+    if(strchr(b,'.')){
+        int idx=fpimm_count++;
+        if(idx>=FP_IMM_MAX)idx=FP_IMM_MAX-1;
+        ir_fpimm[idx]=strtod(b,NULL);
+        in->kinds[slot]=ARG_FP;
+        in->args[slot]=idx;
         return 1;
     }
     if(b[0]=='-'||(b[0]>='0'&&b[0]<='9')){
