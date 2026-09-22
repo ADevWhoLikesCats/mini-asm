@@ -250,9 +250,57 @@ int x86_64_emit(IRModule *m, FILE *o, const TargetDesc *t){
                     store_dst(o,in->dst,"%rax");
                     break;
                 }
-                case OP_NEG: case OP_NOT:
+                case OP_SITOFP: case OP_UITOFP: case OP_FPTOSI: case OP_FPTOUI:
+                case OP_FPEXT:  case OP_FPTRUNC: {
+                    IRTypeKind src=(IRTypeKind)in->pred;
+                    IRTypeKind dt=in->type?in->type->kind:TY_F64;
+                    /* load source into %xmm0 or %rax depending on class */
+                    int src_is_fp = (src==TY_F32||src==TY_F64);
+                    if(src_is_fp){
+                        load_fp(o,in,0,"%xmm0",in->type);
+                    } else {
+                        load_arg(o,in,0,"%rax");
+                    }
+                    if(in->op==OP_SITOFP){
+                        if(dt==TY_F32)fputs("  cvtsi2ssq %rax, %xmm0\n",o);
+                        else          fputs("  cvtsi2sdq %rax, %xmm0\n",o);
+                        store_dst_fp(o,in->dst,"%xmm0");
+                    } else if(in->op==OP_UITOFP){
+                        /* crude unsigned: works for values < 2^63 */
+                        if(dt==TY_F32)fputs("  cvtsi2ssq %rax, %xmm0\n",o);
+                        else          fputs("  cvtsi2sdq %rax, %xmm0\n",o);
+                        store_dst_fp(o,in->dst,"%xmm0");
+                    } else if(in->op==OP_FPTOSI || in->op==OP_FPTOUI){
+                        if(src==TY_F32)fputs("  cvttss2siq %xmm0, %rax\n",o);
+                        else           fputs("  cvttsd2siq %xmm0, %rax\n",o);
+                        store_dst(o,in->dst,"%rax");
+                    } else if(in->op==OP_FPEXT){
+                        fputs("  cvtss2sd %xmm0, %xmm0\n",o);
+                        store_dst_fp(o,in->dst,"%xmm0");
+                    } else if(in->op==OP_FPTRUNC){
+                        fputs("  cvtsd2ss %xmm0, %xmm0\n",o);
+                        store_dst_fp(o,in->dst,"%xmm0");
+                    }
+                    break;
+                }
+                case OP_NEG:
+                    if(in->type && (in->type->kind==TY_F32 || in->type->kind==TY_F64)){
+                        load_fp(o,in,0,"%xmm0",in->type);
+                        if(in->type->kind==TY_F32)
+                            fputs("  movl $0x80000000, %eax\n  movd %eax, %xmm1\n  xorps %xmm1, %xmm0\n",o);
+                        else
+                            fputs("  movabsq $0x8000000000000000, %rax\n  movq %rax, %xmm1\n  xorpd %xmm1, %xmm0\n",o);
+                        store_dst_fp(o,in->dst,"%xmm0");
+                    } else {
+                        load_arg(o,in,0,"%rax");
+                        fputs("  negq %rax\n",o);
+                        canon(o,in->type);
+                        store_dst(o,in->dst,"%rax");
+                    }
+                    break;
+                case OP_NOT:
                     load_arg(o,in,0,"%rax");
-                    fputs(in->op==OP_NEG?"  negq %rax\n":"  notq %rax\n",o);
+                    fputs("  notq %rax\n",o);
                     canon(o,in->type);
                     store_dst(o,in->dst,"%rax");
                     break;

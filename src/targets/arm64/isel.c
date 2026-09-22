@@ -195,10 +195,48 @@ int arm64_emit(IRModule *m, FILE *o, const TargetDesc *t){
                     store_int(o,in->dst,"x0");
                     break;
                 }
+                case OP_SITOFP: case OP_UITOFP: case OP_FPTOSI: case OP_FPTOUI:
+                case OP_FPEXT:  case OP_FPTRUNC: {
+                    IRTypeKind src=(IRTypeKind)in->pred;
+                    IRTypeKind dt=in->type?in->type->kind:TY_F64;
+                    int src_is_fp = (src==TY_F32||src==TY_F64);
+                    if(src_is_fp) load_fp(o,in,0,"d0");
+                    else          load_int(o,in,0,"x0");
+                    if(in->op==OP_SITOFP){
+                        if(dt==TY_F32)fputs("  scvtf s0, x0\n",o);
+                        else          fputs("  scvtf d0, x0\n",o);
+                        store_fp(o,in->dst,"d0");
+                    } else if(in->op==OP_UITOFP){
+                        if(dt==TY_F32)fputs("  ucvtf s0, x0\n",o);
+                        else          fputs("  ucvtf d0, x0\n",o);
+                        store_fp(o,in->dst,"d0");
+                    } else if(in->op==OP_FPTOSI){
+                        if(src==TY_F32)fputs("  fcvtzs x0, s0\n",o);
+                        else           fputs("  fcvtzs x0, d0\n",o);
+                        store_int(o,in->dst,"x0");
+                    } else if(in->op==OP_FPTOUI){
+                        if(src==TY_F32)fputs("  fcvtzu x0, s0\n",o);
+                        else           fputs("  fcvtzu x0, d0\n",o);
+                        store_int(o,in->dst,"x0");
+                    } else if(in->op==OP_FPEXT){
+                        fputs("  fcvt d0, s0\n",o);
+                        store_fp(o,in->dst,"d0");
+                    } else if(in->op==OP_FPTRUNC){
+                        fputs("  fcvt s0, d0\n",o);
+                        store_fp(o,in->dst,"d0");
+                    }
+                    break;
+                }
                 case OP_NEG:
-                    load_int(o,in,0,"x0");
-                    fputs("  neg x0, x0\n",o);
-                    store_int(o,in->dst,"x0");
+                    if(in->type && (in->type->kind==TY_F32 || in->type->kind==TY_F64)){
+                        load_fp(o,in,0,"d0");
+                        fputs("  fneg d0, d0\n",o);
+                        store_fp(o,in->dst,"d0");
+                    } else {
+                        load_int(o,in,0,"x0");
+                        fputs("  neg x0, x0\n",o);
+                        store_int(o,in->dst,"x0");
+                    }
                     break;
                 case OP_NOT:
                     load_int(o,in,0,"x0");

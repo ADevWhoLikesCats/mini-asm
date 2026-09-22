@@ -55,6 +55,8 @@ static IROpcode lookup(const char *n){
         {"ret",OP_RET},{"br",OP_BR},{"cbr",OP_CBR},{"call",OP_CALL},
         {"load",OP_LOAD},{"store",OP_STORE},{"alloca",OP_ALLOCA},{"phi",OP_PHI},{"select",OP_SELECT},
         {"zext",OP_ZEXT},{"sext",OP_SEXT},{"trunc",OP_TRUNC},
+        {"sitofp",OP_SITOFP},{"uitofp",OP_UITOFP},{"fptosi",OP_FPTOSI},
+        {"fptoui",OP_FPTOUI},{"fpext",OP_FPEXT},{"fptrunc",OP_FPTRUNC},
     };
     for(size_t i=0;i<sizeof T/sizeof *T;i++)if(!strcmp(n,T[i].n))return T[i].o;
     return (IROpcode)-1;
@@ -92,14 +94,44 @@ extern double ir_fpimm[FP_IMM_MAX];
 static int fpimm_count=0;
 double ir_fpimm[FP_IMM_MAX];
 
+/* --- Named vreg symbol table --- */
+#define SYM_MAX 1024
+static struct { char name[64]; int vreg; } symtab[SYM_MAX];
+static int symtab_n = 0;
+static int next_user_vreg = 0;
+
+static int sym_lookup(const char *n){
+    for(int i=0;i<symtab_n;i++) if(!strcmp(symtab[i].name,n)) return symtab[i].vreg;
+    return -1;
+}
+static int sym_intern(const char *n){
+    int v = sym_lookup(n);
+    if(v >= 0) return v;
+    if(symtab_n >= SYM_MAX) return 0;
+    v = next_user_vreg++;
+    snprintf(symtab[symtab_n].name, 64, "%s", n);
+    symtab[symtab_n].vreg = v;
+    symtab_n++;
+    return v;
+}
+/* return the smallest user vreg + 1 (for frame-size computation) */
+static int sym_high_water(void){ return next_user_vreg; }
+
 static int parse_operand(FILE *f, IRInstr *in, int slot){
     char b[64];
     if(!word(f,b,64))return 0;
     if(!strcmp(b,",")){if(!word(f,b,64))return 0;}
     if(b[0]=='%'){
         in->kinds[slot]=ARG_VREG;
-        if(!strncmp(b+1,"arg",3))in->args[slot]=PARAM_BASE+atoi(b+4);
-        else in->args[slot]=atoi(b+1);
+        if(!strncmp(b+1,"arg",3) && (b[4]>='0' && b[4]<='9')){
+            in->args[slot]=PARAM_BASE+atoi(b+4);
+        } else if(b[1]>='0' && b[1]<='9'){
+            int v=atoi(b+1);
+            if(v>=next_user_vreg)next_user_vreg=v+1;
+            in->args[slot]=v;
+        } else {
+            in->args[slot]=sym_intern(b+1);
+        }
         return 1;
     }
     if(strchr(b,'.')){
@@ -148,6 +180,7 @@ static IRModule *parse(FILE *f){
             word(f,ret,32);
             F=ir_func_new(M,dupn(name,strlen(name)),lookup_ty(ret));
             gnextv=0;
+            symtab_n=0; next_user_vreg=0;
             if(peekc(f)=='('){
                 fgetc(f);
                 while(1){
@@ -172,8 +205,14 @@ static IRModule *parse(FILE *f){
         int dst=-1;
         char w2[128];
         if(w[0]=='%'){
-            dst=atoi(w+1);
-            if(dst>=gnextv)gnextv=dst+1;
+            if(!strncmp(w+1,"arg",3) && (w[4]>='0' && w[4]<='9')){
+                dst=PARAM_BASE+atoi(w+4);
+            } else if(w[1]>='0' && w[1]<='9'){
+                dst=atoi(w+1);
+                if(dst>=next_user_vreg)next_user_vreg=dst+1;
+            } else {
+                dst=sym_intern(w+1);
+            }
             word(f,w2,128);
             if(!strcmp(w2,"=")){word(f,w2,128);}
             strcpy(w,w2);
@@ -317,6 +356,20 @@ static IRModule *parse(FILE *f){
             parse_operand(f,&tmp,0);
             parse_operand(f,&tmp,1);
             emit_op(OP_STORE,tmp.type,&tmp,-1,2);
+            continue;
+        }
+
+        if(op==OP_SITOFP||op==OP_UITOFP||op==OP_FPTOSI||op==OP_FPTOUI||op==OP_FPEXT||op==OP_FPTRUNC){
+            char st[32],dt[32],to[8];
+            word(f,st,32);
+            /* operand: could be %v or imm */
+            parse_operand(f,&tmp,0);
+            word(f,to,8);
+            word(f,dt,32);
+            tmp.type=lookup_ty(dt);
+            emit_op(op,tmp.type,&tmp,dst,1);
+            /* stash source type in pred as side channel */
+            B->instrs[B->ninstrs-1].pred=(uint32_t)lookup_ty(st)->kind;
             continue;
         }
 
