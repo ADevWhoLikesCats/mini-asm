@@ -1,0 +1,9 @@
+func main i32 {
+block entry
+  %0 = icmp i32 sgt 5 3
+  cbr %0 yes no
+block yes
+  ret i32 1
+block no
+  ret i32 0
+}

@@ -18,8 +18,8 @@ typedef struct IRInstr{
     IROpcode op;
     IRType *type;
     int dst;
-    int args[4];
-    uint8_t kinds[4];
+    int args[6];
+    uint8_t kinds[6];
     uint32_t nargs;
     uint32_t pred;
     const char *callee;

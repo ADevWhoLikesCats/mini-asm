@@ -1,0 +1,7 @@
+func main i32 {
+block entry
+  %0 = shl i32 1 4
+  %1 = srem i32 17 5
+  %2 = add i32 %0 %1
+  ret i32 %2
+}

@@ -6,6 +6,7 @@
 #include <stdio.h>
 
 #define PARAM_BASE 1000
+#define MAXCALLARGS 6
 
 static IRModule *M;
 static IRFunc *F;
@@ -106,14 +107,12 @@ static int parse_operand(FILE *f, IRInstr *in, int slot){
 }
 
 static int emit_op(IROpcode op, IRType *ty, IRInstr *tmp, int dst, int nargs){
-    int a0=tmp?tmp->args[0]:-1;
-    int a1=tmp?tmp->args[1]:-1;
-    int a2=tmp?tmp->args[2]:-1;
-    int a3=tmp?tmp->args[3]:-1;
-    int ix=ir_emit(B, op, ty, a0, a1, a2, a3, nargs);
+    int a[6]; for(int i=0;i<6;i++)a[i]=tmp?tmp->args[i]:-1;
+    int ix=ir_emit(B, op, ty, a[0],a[1],a[2],a[3],nargs);
     IRInstr *e=&B->instrs[ix];
+    for(int i=4;i<6;i++){e->args[i]=a[i];}
     e->dst=dst;
-    if(tmp)for(int i=0;i<4;i++)e->kinds[i]=tmp->kinds[i];
+    if(tmp)for(int i=0;i<6;i++)e->kinds[i]=tmp->kinds[i];
     return ix;
 }
 
@@ -135,8 +134,6 @@ static IRModule *parse(FILE *f){
             word(f,ret,32);
             F=ir_func_new(M,dupn(name,strlen(name)),lookup_ty(ret));
             gnextv=0;
-
-            /* optional param list: ( i32 , i32 , ... ) */
             if(peekc(f)=='('){
                 fgetc(f);
                 while(1){
@@ -145,11 +142,9 @@ static IRModule *parse(FILE *f){
                     if(c==','){fgetc(f);continue;}
                     char pt[32];
                     word(f,pt,32);
-                    /* store param type (we only really need count) */
                     F->nparams++;
                 }
             }
-            /* skip to { */
             while(1){char t[64];if(!word(f,t,64))break;if(!strcmp(t,"{"))break;}
             continue;
         }
@@ -203,21 +198,20 @@ static IRModule *parse(FILE *f){
                     int q=peekc(f);
                     if(q==')'||q==EOF){if(q==')')fgetc(f);break;}
                     if(q==','){fgetc(f);continue;}
-                    if(nargs>=4){char junk[64];word(f,junk,64);nargs++;continue;}
+                    if(nargs>=MAXCALLARGS){char junk[64];word(f,junk,64);nargs++;continue;}
                     parse_operand(f,&ctmp,nargs);
                     nargs++;
                 }
             }
-            if(nargs>4)nargs=4;
+            if(nargs>MAXCALLARGS)nargs=MAXCALLARGS;
             int ix=ir_emit(B,OP_CALL,ctmp.type,
-                           nargs>0?ctmp.args[0]:-1,
-                           nargs>1?ctmp.args[1]:-1,
-                           nargs>2?ctmp.args[2]:-1,
-                           nargs>3?ctmp.args[3]:-1,
-                           nargs);
-            for(int i=0;i<4;i++)B->instrs[ix].kinds[i]=ctmp.kinds[i];
+                           ctmp.args[0],ctmp.args[1],ctmp.args[2],ctmp.args[3],
+                           nargs>3?nargs:0);
+            for(int i=0;i<MAXCALLARGS;i++)B->instrs[ix].args[i]=ctmp.args[i];
+            for(int i=0;i<MAXCALLARGS;i++)B->instrs[ix].kinds[i]=ctmp.kinds[i];
             B->instrs[ix].callee=dupn(cal,strlen(cal));
             B->instrs[ix].dst=dst;
+            B->instrs[ix].nargs=nargs;
             continue;
         }
 
@@ -271,11 +265,19 @@ static IRModule *parse(FILE *f){
             continue;
         }
 
-        /* alloca T  -> args[0] = byte size (as immediate), type = T */
         if(op==OP_ALLOCA){
             char t[32];
             word(f,t,32);
             tmp.type=lookup_ty(t);
+            /* peek: if next token is a digit, it's a byte count */
+            int pk=peekc(f);
+            if(pk>='0'&&pk<='9'){
+                int64_t n=0;
+                char nb[32]; word(f,nb,32); n=strtoll(nb,NULL,0);
+                tmp.args[0]=(int)n; tmp.kinds[0]=ARG_IMM;
+                emit_op(OP_ALLOCA,tmp.type,&tmp,dst,1);
+                continue;
+            }
             tmp.args[0]=4; tmp.kinds[0]=ARG_IMM;
             if(tmp.type->kind==TY_I8)tmp.args[0]=1;
             else if(tmp.type->kind==TY_I16)tmp.args[0]=2;
@@ -285,7 +287,6 @@ static IRModule *parse(FILE *f){
             continue;
         }
 
-        /* load T %p */
         if(op==OP_LOAD){
             char t[32];
             word(f,t,32);
@@ -295,7 +296,6 @@ static IRModule *parse(FILE *f){
             continue;
         }
 
-        /* store T %v %p  OR  store T %v, %p */
         if(op==OP_STORE){
             char t[32];
             word(f,t,32);
@@ -306,10 +306,21 @@ static IRModule *parse(FILE *f){
             continue;
         }
 
-        if(op==OP_NEG||op==OP_NOT||op==OP_FNEG||op==OP_ZEXT||op==OP_SEXT||op==OP_TRUNC){
+        if(op==OP_NEG||op==OP_NOT||op==OP_FNEG){
             char t[32];
             word(f,t,32);
             tmp.type=lookup_ty(t);
+            parse_operand(f,&tmp,0);
+            emit_op(op,tmp.type,&tmp,dst,1);
+            continue;
+        }
+
+        /* zext/sext/trunc: syntax  %d = zext i32 %src  (dst type = i32) */
+        if(op==OP_ZEXT||op==OP_SEXT||op==OP_TRUNC){
+            char dt[32],st[32];
+            word(f,dt,32);
+            word(f,st,32);
+            tmp.type=lookup_ty(dt);
             parse_operand(f,&tmp,0);
             emit_op(op,tmp.type,&tmp,dst,1);
             continue;

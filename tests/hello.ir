@@ -1,0 +1,8 @@
+func main i32 {
+block entry
+  %0 = call i32 putchar(72)
+  %1 = call i32 putchar(105)
+  %2 = call i32 putchar(10)
+  %3 = add i32 0 0
+  ret i32 %3
+}

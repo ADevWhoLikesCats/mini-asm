@@ -1,0 +1,29 @@
+func main i32 {
+block entry
+  %0 = alloca i64 64
+  br init
+block init
+  %1 = phi i32 0 entry %4 body
+  %2 = icmp i32 slt %1 8
+  cbr %2 body done
+block body
+  %3 = shl i64 %1 2
+  %5 = add i64 %0 %3
+  store i32 7, %5
+  %4 = add i32 %1 1
+  br init
+block done
+  %10 = phi i32 0 init %13 sum
+  %11 = phi i32 0 init %14 sum
+  %12 = icmp i32 slt %10 8
+  cbr %12 sum end
+block sum
+  %15 = shl i64 %10 2
+  %16 = add i64 %0 %15
+  %17 = load i32 %16
+  %14 = add i32 %11 %17
+  %13 = add i32 %10 1
+  br done
+block end
+  ret i32 %11
+}
