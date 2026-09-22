@@ -227,6 +227,20 @@ int arm64_emit(IRModule *m, FILE *o, const TargetDesc *t){
                     }
                     break;
                 }
+                case OP_GEP: {
+                    load_int(o,in,0,"x0");
+                    load_int(o,in,1,"x1");
+                    unsigned sz=in->pred;
+                    if(sz==1)      fputs("  add x0, x0, x1\n",o);
+                    else if(sz==2) fputs("  add x0, x0, x1, lsl #1\n",o);
+                    else if(sz==4) fputs("  add x0, x0, x1, lsl #2\n",o);
+                    else if(sz==8) fputs("  add x0, x0, x1, lsl #3\n",o);
+                    else {
+                        fprintf(o,"  mov x2, #%u\n  madd x0, x1, x2, x0\n",sz);
+                    }
+                    store_int(o,in->dst,"x0");
+                    break;
+                }
                 case OP_NEG:
                     if(in->type && (in->type->kind==TY_F32 || in->type->kind==TY_F64)){
                         load_fp(o,in,0,"d0");

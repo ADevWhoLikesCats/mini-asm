@@ -54,7 +54,7 @@ static IROpcode lookup(const char *n){
         {"neg",OP_NEG},{"not",OP_NOT},{"icmp",OP_ICMP},{"fcmp",OP_FCMP},
         {"ret",OP_RET},{"br",OP_BR},{"cbr",OP_CBR},{"call",OP_CALL},
         {"load",OP_LOAD},{"store",OP_STORE},{"alloca",OP_ALLOCA},{"phi",OP_PHI},{"select",OP_SELECT},
-        {"zext",OP_ZEXT},{"sext",OP_SEXT},{"trunc",OP_TRUNC},
+        {"zext",OP_ZEXT},{"sext",OP_SEXT},{"trunc",OP_TRUNC},{"gep",OP_GEP},
         {"sitofp",OP_SITOFP},{"uitofp",OP_UITOFP},{"fptosi",OP_FPTOSI},
         {"fptoui",OP_FPTOUI},{"fpext",OP_FPEXT},{"fptrunc",OP_FPTRUNC},
     };
@@ -370,6 +370,26 @@ static IRModule *parse(FILE *f){
             emit_op(op,tmp.type,&tmp,dst,1);
             /* stash source type in pred as side channel */
             B->instrs[B->ninstrs-1].pred=(uint32_t)lookup_ty(st)->kind;
+            continue;
+        }
+
+        if(op==OP_GEP){
+            char t[32];
+            word(f,t,32);
+            IRType *et=lookup_ty(t);
+            int esz=4;
+            switch(et->kind){
+                case TY_I8:  esz=1; break;
+                case TY_I16: esz=2; break;
+                case TY_I32: case TY_F32: esz=4; break;
+                case TY_I64: case TY_F64: case TY_PTR: esz=8; break;
+                default: esz=4; break;
+            }
+            parse_operand(f,&tmp,0);
+            parse_operand(f,&tmp,1);
+            int ix=emit_op(OP_GEP,I32,&tmp,dst,2);
+            B->instrs[ix].pred=(uint32_t)esz;
+            B->instrs[ix].type=et;
             continue;
         }
 

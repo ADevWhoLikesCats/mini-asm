@@ -4,6 +4,7 @@
 #include "ir.h"
 typedef struct TargetDesc TargetDesc;
 struct TargetDesc { const char *name,*triple,*assembler,*obj_ext; uint32_t ptr_size,stack_align; bool little; };
+const TargetDesc *backend_lookup(const char *name);
 int target_emit_dispatch(IRModule*,FILE*,const TargetDesc*);
 int emit_icmp(IRInstr*,FILE*,const TargetDesc*);
 int emit_fcmp(IRInstr*,FILE*,const TargetDesc*);

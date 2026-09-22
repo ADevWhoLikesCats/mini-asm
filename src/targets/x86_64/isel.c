@@ -283,6 +283,21 @@ int x86_64_emit(IRModule *m, FILE *o, const TargetDesc *t){
                     }
                     break;
                 }
+                case OP_GEP: {
+                    /* base + idx * elementsize, all 64-bit */
+                    load_arg(o,in,0,"%rax");
+                    load_arg(o,in,1,"%rcx");
+                    unsigned sz=in->pred;
+                    if(sz==1)      fputs("  addq %rcx, %rax\n",o);
+                    else if(sz==2) fputs("  leaq (%rax,%rcx,2), %rax\n",o);
+                    else if(sz==4) fputs("  leaq (%rax,%rcx,4), %rax\n",o);
+                    else if(sz==8) fputs("  leaq (%rax,%rcx,8), %rax\n",o);
+                    else {
+                        fprintf(o,"  imulq $%u, %%rcx, %%rcx\n  addq %%rcx, %%rax\n",sz);
+                    }
+                    store_dst(o,in->dst,"%rax");
+                    break;
+                }
                 case OP_NEG:
                     if(in->type && (in->type->kind==TY_F32 || in->type->kind==TY_F64)){
                         load_fp(o,in,0,"%xmm0",in->type);

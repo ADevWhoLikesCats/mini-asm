@@ -1,0 +1,9 @@
+func main i32 {
+block entry
+  %0 = fadd f64 1.5 2.5
+  %1 = fcmp f64 oeq %0 4.0
+  %2 = sitofp i32 %1 to f64
+  %3 = fadd f64 %2 10.5
+  %4 = fptosi f64 %3 to i32
+  ret i32 %4
+}
