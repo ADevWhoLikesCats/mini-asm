@@ -7,13 +7,14 @@
 
 /* Physical registers available for allocation (x86_64).
    Deliberately excludes %rsp and %rbp. */
+/* Allocatable registers. Excluded: %rsp, %rbp (structural), %rax, %rdx
+   (clobbered by idiv/div and used as scratch), %r10, %r11 (scratch). */
 static const char *PHYS[] = {
-    "%rax","%rcx","%rdx","%rsi","%rdi",
-    "%r8","%r9","%r10","%r11",
+    "%rsi","%rdi","%r8","%r9",
     "%rbx","%r12","%r13","%r14","%r15"
 };
 #define NREG ((int)(sizeof PHYS / sizeof *PHYS))
-#define NREG_CALLER_SAVED 9   /* first 9 are clobbered by call */
+#define NREG_CALLER_SAVED 4   /* first 9 are clobbered by call */
 #define NREG_CALLEE_SAVED 5   /* last 5 survive call */
 
 const char *regalloc_regname(int idx){ return (idx>=0 && idx<NREG) ? PHYS[idx] : NULL; }
@@ -25,6 +26,7 @@ typedef struct {
     int start;
     int end;
     int crosses_call;
+    int force_spill;
     int assigned;   /* -1 unset, -2 spilled, else register idx */
 } Interval;
 
@@ -57,6 +59,7 @@ static Interval *add_iv(IvList *L, int vreg){
     i->start = INT_MAX;
     i->end = -1;
     i->crosses_call = 0;
+    i->force_spill = 0;
     i->assigned = -1;
     return i;
 }
@@ -81,6 +84,17 @@ static void mark_call_crossing(IvList *L, int call_pos){
 /* Compute intervals by walking blocks in order.
    Position counter increments per instruction; phi copies on pred edges count
    as uses of the source vreg at the pred block's tail. */
+static int is_fp_class(IROpcode op){
+    switch(op){
+        case OP_FADD: case OP_FSUB: case OP_FMUL: case OP_FDIV: case OP_FNEG:
+        case OP_FCMP:
+        case OP_SITOFP: case OP_UITOFP: case OP_FPTOSI: case OP_FPTOUI:
+        case OP_FPEXT: case OP_FPTRUNC:
+            return 1;
+        default: return 0;
+    }
+}
+
 static IvList compute_intervals(IRFunc *f, int *out_nvregs){
     IvList L = {0};
     int pos = 0;
@@ -104,14 +118,19 @@ static IvList compute_intervals(IRFunc *f, int *out_nvregs){
                 }
                 continue;
             }
+            int fp_class = is_fp_class(in->op);
             for(uint32_t a=0; a<in->nargs; a++){
                 if(in->kinds[a] == ARG_VREG){
                     touch_use(&L, in->args[a], pos);
+                    if(fp_class){ Interval *iv = find_iv(&L, in->args[a]);
+                                  if(iv) iv->force_spill = 1; }
                     if(in->args[a] > maxv) maxv = in->args[a];
                 }
             }
             if(in->dst >= 0){
                 touch_def(&L, in->dst, pos);
+                if(fp_class){ Interval *iv = find_iv(&L, in->dst);
+                              if(iv) iv->force_spill = 1; }
                 if(in->dst > maxv) maxv = in->dst;
             }
             /* call-crossing is marked in pass 3 below */
@@ -176,6 +195,35 @@ static IvList compute_intervals(IRFunc *f, int *out_nvregs){
         }
     }
 
+    /* Extend live ranges across loop back edges. A vreg that is live
+       anywhere inside a loop must remain live until the end of the loop,
+       because the last use is cyclically re-live on each iteration. */
+    for(uint32_t bi=0; bi<f->nblocks; bi++){
+        IRBlock *b = &f->blocks[bi];
+        for(uint32_t ii=0; ii<b->ninstrs; ii++){
+            IRInstr *in = &b->instrs[ii];
+            const char *succs[2] = {NULL,NULL};
+            if(in->op==OP_BR) succs[0]=in->label;
+            else if(in->op==OP_CBR){succs[0]=in->label;succs[1]=in->label2;}
+            for(int s=0;s<2;s++){
+                if(!succs[s]) continue;
+                for(uint32_t sj=0; sj<f->nblocks; sj++){
+                    if(strcmp(f->blocks[sj].name, succs[s])) continue;
+                    if(block_start[sj] <= block_start[bi]){
+                        int lo = block_start[sj], hi = block_end[bi];
+                        for(int k=0;k<L.n;k++){
+                            Interval *iv = &L.iv[k];
+                            if(iv->start <= hi && iv->end >= lo){
+                                if(iv->end < hi) iv->end = hi;
+                            }
+                        }
+                    }
+                    break;
+                }
+            }
+        }
+    }
+
     *out_nvregs = maxv + 1;
     free(block_start);
     free(block_end);
@@ -192,6 +240,17 @@ static int cmp_iv(const void *a, const void *b){
 static RegAlloc regalloc_run_internal(IRFunc *f){
     int nvregs = 0;
     IvList L = compute_intervals(f, &nvregs);
+
+    if(getenv("CC_NO_REGALLOC")){
+        RegAlloc out;
+        out.nvregs = nvregs;
+        out.nspills = nvregs;
+        out.nassigned = 0;
+        out.reg_of = malloc(nvregs * sizeof(int));
+        for(int i=0;i<nvregs;i++) out.reg_of[i] = -1;
+        free(L.iv);
+        return out;
+    }
 
     /* Sort by start */
     qsort(L.iv, L.n, sizeof(Interval), cmp_iv);
@@ -219,6 +278,12 @@ static RegAlloc regalloc_run_internal(IRFunc *f){
                     reg_free_until[r] = 0;
                 }
             }
+        }
+
+        if(iv->force_spill){
+            iv->assigned = -2;
+            nspills++;
+            continue;
         }
 
         /* If this interval crosses a call, it can only use callee-saved regs. */
