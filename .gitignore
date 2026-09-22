@@ -1,0 +1,25 @@
+# build artifacts
+*.o
+*.a
+*.so
+*.so.*
+*.s
+cc-backend
+
+# editor / IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+tags
+cscope.out
+
+# OS
+.DS_Store
+Thumbs.db
+
+# misc
+core
+core.*
+*.log
