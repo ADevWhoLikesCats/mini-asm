@@ -1,0 +1,17 @@
+# EXPECT 36
+func add8 i32 (i32,i32,i32,i32,i32,i32,i32,i32) {
+block entry
+  %0 = add i32 %arg0 %arg1
+  %1 = add i32 %0 %arg2
+  %2 = add i32 %1 %arg3
+  %3 = add i32 %2 %arg4
+  %4 = add i32 %3 %arg5
+  %5 = add i32 %4 %arg6
+  %6 = add i32 %5 %arg7
+  ret i32 %6
+}
+func main i32 {
+block entry
+  %0 = call i32 add8(1,2,3,4,5,6,7,8)
+  ret i32 %0
+}

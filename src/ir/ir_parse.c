@@ -6,7 +6,7 @@
 #include <stdio.h>
 
 #define PARAM_BASE 1000
-#define MAXCALLARGS 6
+#define MAXCALLARGS 16
 
 static IRModule *M;
 static IRFunc *F;
@@ -54,7 +54,7 @@ static IROpcode lookup(const char *n){
         {"neg",OP_NEG},{"not",OP_NOT},{"icmp",OP_ICMP},{"fcmp",OP_FCMP},
         {"ret",OP_RET},{"br",OP_BR},{"cbr",OP_CBR},{"call",OP_CALL},
         {"load",OP_LOAD},{"store",OP_STORE},{"alloca",OP_ALLOCA},{"phi",OP_PHI},{"select",OP_SELECT},
-        {"zext",OP_ZEXT},{"sext",OP_SEXT},{"trunc",OP_TRUNC},{"gep",OP_GEP},
+        {"zext",OP_ZEXT},{"sext",OP_SEXT},{"trunc",OP_TRUNC},{"gep",OP_GEP},{"str",OP_STR},
         {"sitofp",OP_SITOFP},{"uitofp",OP_UITOFP},{"fptosi",OP_FPTOSI},
         {"fptoui",OP_FPTOUI},{"fpext",OP_FPEXT},{"fptrunc",OP_FPTRUNC},
     };
@@ -158,6 +158,35 @@ static int sym_intern(const char *n){
     symtab_n++;
     return v;
 }
+/* Reads a double-quoted string from the stream with basic escapes.
+   Input: the opening quote has already been peeked but not consumed.
+   Returns malloc'd bytes (NUL-terminated), sets *outlen. */
+static char *read_string_literal(FILE *f, uint32_t *outlen){
+    int c = fgetc(f);
+    if(c != '"') return NULL;
+    size_t cap = 32, n = 0;
+    char *buf = malloc(cap);
+    while((c = fgetc(f)) != EOF && c != '"'){
+        if(c == '\\'){
+            int e = fgetc(f);
+            switch(e){
+                case 'n': c = '\n'; break;
+                case 't': c = '\t'; break;
+                case 'r': c = '\r'; break;
+                case '0': c = '\0'; break;
+                case '\\': c = '\\'; break;
+                case '"': c = '"';  break;
+                default:  c = e;    break;
+            }
+        }
+        if(n+1 >= cap){ cap *= 2; buf = realloc(buf, cap); }
+        buf[n++] = (char)c;
+    }
+    buf[n] = 0;
+    *outlen = (uint32_t)n;
+    return buf;
+}
+
 static int parse_operand(FILE *f, IRInstr *in, int slot){
     char b[64];
     if(!word(f,b,64))return 0;
@@ -199,7 +228,7 @@ static int emit_op(IROpcode op, IRType *ty, IRInstr *tmp, int dst, int nargs){
     IRInstr *e=&B->instrs[ix];
     for(int i=4;i<6;i++){e->args[i]=a[i];}
     e->dst=dst;
-    if(tmp)for(int i=0;i<6;i++)e->kinds[i]=tmp->kinds[i];
+    if(tmp)for(int i=0;i<16;i++)e->kinds[i]=tmp->kinds[i];
     return ix;
 }
 
@@ -282,6 +311,7 @@ static IRModule *parse(FILE *f){
                     if(c==','){fgetc(f);continue;}
                     char pt[32];
                     word(f,pt,32);
+                    if(!strcmp(pt,"...")){ F->nparams |= 0x80000000u; continue; }
                     F->nparams++;
                 }
             }
@@ -350,9 +380,7 @@ static IRModule *parse(FILE *f){
                 }
             }
             if(nargs>MAXCALLARGS)nargs=MAXCALLARGS;
-            int ix=ir_emit(B,OP_CALL,ctmp.type,
-                           ctmp.args[0],ctmp.args[1],ctmp.args[2],ctmp.args[3],
-                           nargs>3?nargs:0);
+            int ix=ir_emit(B,OP_CALL,ctmp.type,0,0,0,0,nargs);
             for(int i=0;i<MAXCALLARGS;i++)B->instrs[ix].args[i]=ctmp.args[i];
             for(int i=0;i<MAXCALLARGS;i++)B->instrs[ix].kinds[i]=ctmp.kinds[i];
             B->instrs[ix].callee=dupn(cal,strlen(cal));
@@ -451,6 +479,20 @@ static IRModule *parse(FILE *f){
             parse_operand(f,&tmp,0);
             parse_operand(f,&tmp,1);
             emit_op(OP_STORE,tmp.type,&tmp,-1,2);
+            continue;
+        }
+
+        if(op==OP_STR){
+            int q = peekc(f);
+            if(q != '"'){ fprintf(stderr, "str: expected string literal\n"); continue; }
+            uint32_t len = 0;
+            char *bytes = read_string_literal(f, &len);
+            int idx = ir_add_string(M, bytes, len);
+            free(bytes);
+            int ix = ir_emit(B, OP_STR, I32, idx, -1, -1, -1, 1);
+            B->instrs[ix].dst = dst;
+            B->instrs[ix].kinds[0] = ARG_IMM;
+            B->instrs[ix].args[0] = idx;
             continue;
         }
 

@@ -160,6 +160,12 @@ int x86_64_emit(IRModule *m, FILE *o, const TargetDesc *t){
         static const char *areg[]={"%rdi","%rsi","%rdx","%rcx","%r8","%r9"};
         for(uint32_t p=0;p<f->nparams&&p<6;p++)
             fprintf(o,"  movq %s, %d(%%rbp)\n",areg[p],vreg_off(PARAM_BASE+(int)p));
+        for(uint32_t p=6;p<f->nparams;p++){
+            /* arg 7 at [rbp+16], arg 8 at [rbp+24], ... */
+            uint32_t off = 16 + (p-6)*8;
+            fprintf(o,"  movq %u(%%rbp), %%rax\n  movq %%rax, %d(%%rbp)\n",
+                    off, vreg_off(PARAM_BASE+(int)p));
+        }
 
         for(uint32_t j=0;j<f->nblocks;j++){
             IRBlock *b=&f->blocks[j];
@@ -298,6 +304,16 @@ int x86_64_emit(IRModule *m, FILE *o, const TargetDesc *t){
                     store_dst(o,in->dst,"%rax");
                     break;
                 }
+                case OP_STR: {
+                    /* args[0] = string index into m->strings */
+                    uint32_t idx = (uint32_t)in->args[0];
+                    if(in->dst>=0){
+                        fprintf(o,"  leaq %s(%%rip), %%rax\n",
+                                m->strings[idx].label);
+                        fprintf(o,"  movq %%rax, %d(%%rbp)\n", vreg_off(in->dst));
+                    }
+                    break;
+                }
                 case OP_GEP_FIELD: {
                     load_arg(o,in,0,"%rax");
                     unsigned off = in->pred;
@@ -380,9 +396,31 @@ int x86_64_emit(IRModule *m, FILE *o, const TargetDesc *t){
 
                 case OP_CALL: {
                     static const char *areg2[]={"%rdi","%rsi","%rdx","%rcx","%r8","%r9"};
-                    for(uint32_t a=0;a<in->nargs&&a<6;a++)
+                    uint32_t n = in->nargs;
+                    uint32_t stackargs = n > 6 ? n - 6 : 0;
+                    if(stackargs){
+                        /* SysV requires %rsp 16-aligned at call. Each pushed arg is 8 bytes.
+                           Pad with one extra 8-byte slot if stackargs is odd. */
+                        uint32_t bytes = stackargs * 8;
+                        uint32_t pad = (bytes & 15) ? 8 : 0;
+                        if(pad) fputs("  subq $8, %rsp\n",o);
+                        /* push right-to-left: arg[n-1] first, arg[6] last */
+                        for(int a=(int)n-1; a>=6; a--){
+                            load_arg(o,in,a,"%rax");
+                            fputs("  pushq %rax\n",o);
+                        }
+                    }
+                    for(uint32_t a=0;a<6&&a<n;a++)
                         load_arg(o,in,a,areg2[a]);
+                    /* SysV: %al = number of FP args in XMM regs. We never pass FP
+                       args in xmm yet, so zero it. Safe for non-vararg too. */
+                    fputs("  xorl %eax, %eax\n",o);
                     if(in->callee)fprintf(o,"  call %s\n",in->callee);
+                    if(stackargs){
+                        uint32_t bytes = stackargs * 8;
+                        uint32_t pad = (bytes & 15) ? 8 : 0;
+                        fprintf(o,"  addq $%u, %%rsp\n", bytes + pad);
+                    }
                     store_dst(o,in->dst,"%rax");
                     break;
                 }
@@ -401,6 +439,17 @@ int x86_64_emit(IRModule *m, FILE *o, const TargetDesc *t){
             }
         }
         fprintf(o,".size %s, .-%s\n",f->name,f->name);
+    }
+    if(m->nstrings){
+        fputs(".section .rodata\n", o);
+        for(uint32_t i=0;i<m->nstrings;i++){
+            IRString *st = &m->strings[i];
+            fprintf(o, "%s:\n", st->label);
+            fputs("  .byte ", o);
+            for(uint32_t j=0;j<st->len;j++)
+                fprintf(o, "%u,", (unsigned char)st->bytes[j]);
+            fputs("0\n", o);  /* NUL terminator */
+        }
     }
     fputs(".section .note.GNU-stack,\"\",@progbits\n",o);
     return 0;

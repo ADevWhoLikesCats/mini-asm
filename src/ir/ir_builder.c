@@ -226,6 +226,6 @@ IRValue *ir_call(IRBuilder *b, IRType *ret, const char *callee, IRValue **args, 
     IRValue *d = new_vreg_val(b);
     e->dst = d->vreg;
     e->callee = callee;
-    for(int i=0;i<nargs && i<6;i++) set_arg(e, i, args[i]);
+    for(int i=0;i<nargs && i<16;i++) set_arg(e, i, args[i]);
     return d;
 }

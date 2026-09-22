@@ -2,6 +2,28 @@
 #include "ir_parse.h"
 #include <stdlib.h>
 #include <string.h>
+#include <stdio.h>
+#include <stdlib.h>
+
+static char *ir_strdup(const char *s){ size_t n=strlen(s); char *p=malloc(n+1); memcpy(p,s,n+1); return p; }
+
+int ir_add_string(IRModule *m, const char *bytes, uint32_t len){
+    if(m->nstrings == m->strcap){
+        m->strcap = m->strcap ? m->strcap*2 : 8;
+        m->strings = realloc(m->strings, m->strcap * sizeof(IRString));
+    }
+    uint32_t idx = m->nstrings++;
+    char lbl[32];
+    snprintf(lbl, sizeof lbl, ".Lstr_%u", idx);
+    IRString *s = &m->strings[idx];
+    s->label = ir_strdup(lbl);
+    s->bytes = malloc(len+1);
+    memcpy(s->bytes, bytes, len);
+    s->bytes[len] = 0;
+    s->len = len;
+    return (int)idx;
+}
+
 IRModule*ir_module_new(void){IRModule*m=calloc(1,sizeof*m);m->cap=8;m->funcs=calloc(8,sizeof(IRFunc));return m;}
 IRFunc*ir_func_new(IRModule*m,const char*n,IRType*r){
   if(m->nfuncs==m->cap){m->cap*=2;m->funcs=realloc(m->funcs,m->cap*sizeof(IRFunc));}

@@ -241,6 +241,15 @@ int arm64_emit(IRModule *m, FILE *o, const TargetDesc *t){
                     store_int(o,in->dst,"x0");
                     break;
                 }
+                case OP_STR: {
+                    uint32_t idx = (uint32_t)in->args[0];
+                    if(in->dst>=0){
+                        fprintf(o,"  adrp x9, %s\n  add x9, x9, :lo12:%s\n",
+                                m->strings[idx].label, m->strings[idx].label);
+                        fprintf(o,"  str x9, [sp, #%d]\n", slotoff(in->dst));
+                    }
+                    break;
+                }
                 case OP_GEP_FIELD: {
                     load_int(o,in,0,"x0");
                     unsigned off = in->pred;
@@ -372,6 +381,17 @@ int arm64_emit(IRModule *m, FILE *o, const TargetDesc *t){
             }
         }
         fprintf(o,".size %s, .-%s\n",f->name,f->name);
+    }
+    if(m->nstrings){
+        fputs(".section .rodata\n", o);
+        for(uint32_t i=0;i<m->nstrings;i++){
+            IRString *st = &m->strings[i];
+            fprintf(o, "%s:\n", st->label);
+            fputs("  .byte ", o);
+            for(uint32_t j=0;j<st->len;j++)
+                fprintf(o, "%u,", (unsigned char)st->bytes[j]);
+            fputs("0\n", o);
+        }
     }
     fputs(".section .note.GNU-stack,\"\",%progbits\n",o);
     return 0;
