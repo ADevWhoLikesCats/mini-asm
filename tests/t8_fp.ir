@@ -1,0 +1,7 @@
+# EXPECT 1
+func main i32 {
+block entry
+  %0 = fadd f64 1.5 2.5
+  %1 = fcmp f64 oeq %0 4.0
+  ret i32 %1
+}

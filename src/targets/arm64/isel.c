@@ -241,6 +241,13 @@ int arm64_emit(IRModule *m, FILE *o, const TargetDesc *t){
                     store_int(o,in->dst,"x0");
                     break;
                 }
+                case OP_GEP_FIELD: {
+                    load_int(o,in,0,"x0");
+                    unsigned off = in->pred;
+                    fprintf(o,"  add x0, x0, #%u\n",off);
+                    store_int(o,in->dst,"x0");
+                    break;
+                }
                 case OP_NEG:
                     if(in->type && (in->type->kind==TY_F32 || in->type->kind==TY_F64)){
                         load_fp(o,in,0,"d0");

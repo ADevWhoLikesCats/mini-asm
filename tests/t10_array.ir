@@ -1,0 +1,30 @@
+# EXPECT 56
+func main i32 {
+block entry
+  %base = alloca i64 64
+  br init
+block init
+  %i0 = phi i32 0 entry %i_next body
+  %c0 = icmp i32 slt %i0 8
+  cbr %c0 body done
+block body
+  %off = shl i64 %i0 2
+  %addr = add i64 %base %off
+  store i32 7, %addr
+  %i_next = add i32 %i0 1
+  br init
+block done
+  %j0 = phi i32 0 init %j_next sum
+  %sum0 = phi i32 0 init %sum_next sum
+  %c1 = icmp i32 slt %j0 8
+  cbr %c1 sum end
+block sum
+  %off2 = shl i64 %j0 2
+  %addr2 = add i64 %base %off2
+  %v = load i32 %addr2
+  %sum_next = add i32 %sum0 %v
+  %j_next = add i32 %j0 1
+  br done
+block end
+  ret i32 %sum0
+}

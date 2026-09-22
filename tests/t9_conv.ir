@@ -1,0 +1,7 @@
+# EXPECT 42
+func main i32 {
+block entry
+  %0 = sitofp i32 42 to f64
+  %1 = fptosi f64 %0 to i32
+  ret i32 %1
+}

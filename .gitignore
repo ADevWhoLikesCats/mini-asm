@@ -1,12 +1,17 @@
 # build artifacts
+build/
 *.o
 *.a
 *.so
 *.so.*
 *.s
 cc-backend
+bt_add
+bt_loop
+bt_array
+bt_hello
 
-# editor / IDE
+# editor
 .vscode/
 .idea/
 *.swp

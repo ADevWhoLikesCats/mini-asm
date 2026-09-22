@@ -1,0 +1,11 @@
+# EXPECT 42
+func add i32 (i32, i32) {
+block entry
+  %0 = add i32 %arg0 %arg1
+  ret i32 %0
+}
+func main i32 {
+block entry
+  %0 = call i32 add(10, 32)
+  ret i32 %0
+}

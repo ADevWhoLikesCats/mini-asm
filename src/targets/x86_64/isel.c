@@ -298,6 +298,13 @@ int x86_64_emit(IRModule *m, FILE *o, const TargetDesc *t){
                     store_dst(o,in->dst,"%rax");
                     break;
                 }
+                case OP_GEP_FIELD: {
+                    load_arg(o,in,0,"%rax");
+                    unsigned off = in->pred;
+                    fprintf(o,"  addq $%u, %%rax\n",off);
+                    store_dst(o,in->dst,"%rax");
+                    break;
+                }
                 case OP_NEG:
                     if(in->type && (in->type->kind==TY_F32 || in->type->kind==TY_F64)){
                         load_fp(o,in,0,"%xmm0",in->type);
