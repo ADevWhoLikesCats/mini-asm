@@ -1,5 +1,5 @@
 # cc-backend
-Multi-target compiler backend: IR -> / x86_64 / ARM64.
+Multi-target compiler backend: IR -> / x86_64 / ARM64 / ARM.
 ## Build
 ```sh
 make
