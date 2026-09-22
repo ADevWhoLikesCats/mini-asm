@@ -19,12 +19,12 @@ struct IRBuilder {
     int       next_vreg;
 };
 
-/* --- FP immediate side table (shared by all emits) --- */
-static double g_fptab[256];
+/* --- FP immediate table (per-process; fine for our single-module case) --- */
+static double g_fptab[1024];
 static int    g_fpn = 0;
 static int    fp_add(double d){
     int i = g_fpn++;
-    if(i >= 256) i = 255;
+    if(i >= 1024) i = 1023;
     g_fptab[i] = d;
     return i;
 }
@@ -42,22 +42,91 @@ IRType *ir_type_f32 (void){ if(!g_f32 ) g_f32 =mk(TY_F32 ); return g_f32;  }
 IRType *ir_type_f64 (void){ if(!g_f64 ) g_f64 =mk(TY_F64 ); return g_f64;  }
 IRType *ir_type_ptr (void){ if(!g_ptr ) g_ptr =mk(TY_PTR ); return g_ptr;  }
 
+/* --- Named types --- */
+#define IB_NTYPE_MAX 128
+static struct { char name[64]; IRType *ty; } g_named[IB_NTYPE_MAX];
+static int g_named_n = 0;
+void ir_type_register(const char *name, IRType *t){
+    if(g_named_n >= IB_NTYPE_MAX) return;
+    snprintf(g_named[g_named_n].name, 64, "%s", name);
+    g_named[g_named_n].ty = t;
+    g_named_n++;
+    if(!t->name) t->name = name;
+}
+IRType *ir_type_named(const char *name){
+    for(int i=0;i<g_named_n;i++) if(!strcmp(g_named[i].name, name)) return g_named[i].ty;
+    return NULL;
+}
+
+static uint32_t type_size_align(IRType *t, uint32_t *align){
+    uint32_t a;
+    switch(t->kind){
+        case TY_I8:  a=1; break;
+        case TY_I16: a=2; break;
+        case TY_I32: case TY_F32: a=4; break;
+        case TY_I64: case TY_F64: case TY_PTR: a=8; break;
+        case TY_STRUCT: a=t->u.struct_.align; break;
+        case TY_ARRAY:  a=1; break;
+        default: a=4; break;
+    }
+    if(align) *align = a;
+    switch(t->kind){
+        case TY_I8:  return 1;
+        case TY_I16: return 2;
+        case TY_I32: case TY_F32: return 4;
+        case TY_I64: case TY_F64: case TY_PTR: return 8;
+        case TY_STRUCT: return t->u.struct_.size;
+        case TY_ARRAY:  return t->u.array.size;
+        default: return 4;
+    }
+}
+
+IRType *ir_type_struct(const char *name, IRType **fields, uint32_t nfields){
+    IRType *t = calloc(1,sizeof *t);
+    t->kind = TY_STRUCT;
+    t->u.struct_.fields  = fields;
+    t->u.struct_.nfields = nfields;
+    t->u.struct_.offsets = calloc(nfields, sizeof(uint32_t));
+    uint32_t off = 0, max_align = 1;
+    for(uint32_t i=0;i<nfields;i++){
+        uint32_t fa; uint32_t fs = type_size_align(fields[i], &fa);
+        off = (off + fa - 1) & ~(fa - 1);
+        t->u.struct_.offsets[i] = off;
+        off += fs;
+        if(fa > max_align) max_align = fa;
+    }
+    off = (off + max_align - 1) & ~(max_align - 1);
+    t->u.struct_.size  = off;
+    t->u.struct_.align = max_align;
+    if(name) ir_type_register(name, t);
+    return t;
+}
+IRType *ir_type_array(IRType *elem, uint64_t count){
+    IRType *t = calloc(1,sizeof *t);
+    t->kind = TY_ARRAY;
+    t->u.array.elem  = elem;
+    t->u.array.count = count;
+    uint32_t a; uint32_t esz = type_size_align(elem, &a);
+    t->u.array.size = (uint32_t)count * esz;
+    return t;
+}
+
 /* --- Values --- */
 IRValue *ir_const_i(IRType *t, int64_t v){
     IRValue *x = calloc(1,sizeof *x);
-    x->is_const=1; x->i=v; x->type=t;
+    x->is_const = 1; x->i = v; x->type = t;
     return x;
 }
 IRValue *ir_const_f(IRType *t, double d){
     IRValue *x = calloc(1,sizeof *x);
-    x->is_const=2; x->f=d; x->type=t;
+    x->is_const = 2; x->f = d; x->type = t;
     return x;
 }
 
 /* --- Builder lifecycle --- */
 IRBuilder *ir_builder_new(IRModule *m){
     IRBuilder *b = calloc(1,sizeof *b);
-    b->m=m; b->next_vreg=0;
+    b->m = m; b->next_vreg = 0;
     return b;
 }
 void ir_builder_free(IRBuilder *b){ free(b); }
@@ -68,13 +137,10 @@ IRFunc *ir_builder_func(IRBuilder *b, const char *name, IRType *ret){
     return b->cur_func;
 }
 void ir_builder_params(IRBuilder *b, IRFunc *f, IRType **types, int n){
-    (void)b;
-    f->nparams = (uint32_t)n;
-    f->params = types;
+    (void)b; f->nparams = (uint32_t)n; f->params = types;
 }
 IRBlock *ir_builder_block(IRBuilder *b, IRFunc *f, const char *name){
-    (void)b;
-    return ir_block_new(f, name);
+    (void)b; return ir_block_new(f, name);
 }
 void ir_set_insert(IRBuilder *b, IRBlock *blk){ b->cur_block = blk; }
 IRBlock *ir_current_block(IRBuilder *b){ return b->cur_block; }
@@ -88,12 +154,11 @@ static IRValue *new_vreg_val(IRBuilder *b){
     return v;
 }
 static void set_arg(IRInstr *e, int i, IRValue *v){
-    if(!v){ e->kinds[i]=ARG_NONE; return; }
-    if(v->is_const==0){ e->kinds[i]=ARG_VREG; e->args[i]=v->vreg; }
-    else if(v->is_const==1){ e->kinds[i]=ARG_IMM; e->args[i]=(int)v->i; }
-    else if(v->is_const==2){ e->kinds[i]=ARG_FP;  e->args[i]=fp_add(v->f); }
+    if(!v){ e->kinds[i] = ARG_NONE; return; }
+    if(v->is_const == 0){ e->kinds[i] = ARG_VREG; e->args[i] = v->vreg; }
+    else if(v->is_const == 1){ e->kinds[i] = ARG_IMM; e->args[i] = (int)v->i; }
+    else if(v->is_const == 2){ e->kinds[i] = ARG_FP;  e->args[i] = fp_add(v->f); }
 }
-
 static IRValue *emit1(IRBuilder *b, IROpcode op, IRType *t, IRValue *a){
     int ix = ir_emit(b->cur_block, op, t, 0, 0, 0, 0, 1);
     IRInstr *e = &b->cur_block->instrs[ix];
@@ -172,16 +237,62 @@ IRValue *ir_gep(IRBuilder *b, IRType *elem, IRValue *base, IRValue *idx){
     IRInstr *e = &b->cur_block->instrs[b->cur_block->ninstrs-1];
     int esz = 4;
     switch(elem->kind){
-        case TY_I8:  esz=1; break;
+        case TY_I8: esz=1; break;
         case TY_I16: esz=2; break;
         case TY_I32: case TY_F32: esz=4; break;
         case TY_I64: case TY_F64: case TY_PTR: esz=8; break;
+        case TY_STRUCT: esz=(int)elem->u.struct_.size; break;
+        case TY_ARRAY:  esz=(int)elem->u.array.size; break;
         default: esz=4; break;
     }
     e->pred = (uint32_t)esz;
     e->type = elem;
     return r;
 }
+IRValue *ir_gep_field(IRBuilder *b, IRType *st, IRValue *base, uint32_t fld){
+    if(st->kind != TY_STRUCT || fld >= st->u.struct_.nfields) return base;
+    int ix = ir_emit(b->cur_block, OP_GEP_FIELD, ir_type_i32(),
+                     base->is_const==0 ? base->vreg : 0, -1, -1, -1, 1);
+    IRInstr *e = &b->cur_block->instrs[ix];
+    IRValue *d = new_vreg_val(b);
+    e->dst = d->vreg;
+    set_arg(e, 0, base);
+    e->pred = st->u.struct_.offsets[fld];
+    e->type = st;
+    return d;
+}
+
+/* --- Strings --- */
+IRValue *ir_str(IRBuilder *b, const char *bytes, uint32_t len){
+    int idx = ir_add_string(b->m, bytes, len);
+    int ix = ir_emit(b->cur_block, OP_STR, ir_type_i32(), idx, -1, -1, -1, 1);
+    IRInstr *e = &b->cur_block->instrs[ix];
+    IRValue *d = new_vreg_val(b);
+    e->dst = d->vreg;
+    e->kinds[0] = ARG_IMM;
+    e->args[0]  = idx;
+    return d;
+}
+
+/* --- Conversions --- */
+static IRValue *emit_conv(IRBuilder *b, IROpcode op, IRType *from, IRType *to, IRValue *x){
+    int ix = ir_emit(b->cur_block, op, to, 0, 0, 0, 0, 1);
+    IRInstr *e = &b->cur_block->instrs[ix];
+    IRValue *d = new_vreg_val(b);
+    e->dst = d->vreg;
+    set_arg(e, 0, x);
+    e->pred = (uint32_t)from->kind;
+    return d;
+}
+IRValue *ir_zext   (IRBuilder *b, IRType *f, IRType *t, IRValue *x){ return emit_conv(b,OP_ZEXT   ,f,t,x); }
+IRValue *ir_sext   (IRBuilder *b, IRType *f, IRType *t, IRValue *x){ return emit_conv(b,OP_SEXT   ,f,t,x); }
+IRValue *ir_trunc  (IRBuilder *b, IRType *f, IRType *t, IRValue *x){ return emit_conv(b,OP_TRUNC  ,f,t,x); }
+IRValue *ir_sitofp (IRBuilder *b, IRType *f, IRType *t, IRValue *x){ return emit_conv(b,OP_SITOFP ,f,t,x); }
+IRValue *ir_uitofp (IRBuilder *b, IRType *f, IRType *t, IRValue *x){ return emit_conv(b,OP_UITOFP ,f,t,x); }
+IRValue *ir_fptosi (IRBuilder *b, IRType *f, IRType *t, IRValue *x){ return emit_conv(b,OP_FPTOSI ,f,t,x); }
+IRValue *ir_fptoui (IRBuilder *b, IRType *f, IRType *t, IRValue *x){ return emit_conv(b,OP_FPTOUI ,f,t,x); }
+IRValue *ir_fpext  (IRBuilder *b, IRType *f, IRType *t, IRValue *x){ return emit_conv(b,OP_FPEXT  ,f,t,x); }
+IRValue *ir_fptrunc(IRBuilder *b, IRType *f, IRType *t, IRValue *x){ return emit_conv(b,OP_FPTRUNC,f,t,x); }
 
 /* --- Control flow --- */
 void ir_br(IRBuilder *b, IRBlock *dest){
@@ -220,12 +331,16 @@ void ir_unreachable(IRBuilder *b){
 }
 
 /* --- Calls --- */
-IRValue *ir_call(IRBuilder *b, IRType *ret, const char *callee, IRValue **args, int nargs){
+IRValue *ir_call_n(IRBuilder *b, IRType *ret, const char *callee, IRValue **args, int nargs){
+    if(nargs > 16) nargs = 16;
     int ix = ir_emit(b->cur_block, OP_CALL, ret, 0, 0, 0, 0, nargs);
     IRInstr *e = &b->cur_block->instrs[ix];
     IRValue *d = new_vreg_val(b);
     e->dst = d->vreg;
     e->callee = callee;
-    for(int i=0;i<nargs && i<16;i++) set_arg(e, i, args[i]);
+    for(int i=0;i<nargs;i++) set_arg(e, i, args[i]);
     return d;
+}
+IRValue *ir_call(IRBuilder *b, IRType *ret, const char *callee, IRValue **args, int nargs){
+    return ir_call_n(b, ret, callee, args, nargs);
 }
