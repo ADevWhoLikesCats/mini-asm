@@ -8,4 +8,4 @@ make
 ```sh
 ./cc-backend <target> <input.ir> <output.o>
 ```
-Targets: `x86`, `x86_64`, `arm`, `arm64`, `riscv`.
+Targets: , `x86_64`, `arm`, `arm64`.
