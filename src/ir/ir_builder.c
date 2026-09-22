@@ -131,6 +131,13 @@ IRBuilder *ir_builder_new(IRModule *m){
 }
 void ir_builder_free(IRBuilder *b){ free(b); }
 
+IRValue *ir_arg(IRBuilder *b, int i){
+    (void)b;
+    IRValue *v = calloc(1,sizeof *v);
+    v->is_const = 0;
+    v->vreg = 1000 + i;   /* PARAM_BASE */
+    return v;
+}
 IRFunc *ir_builder_func(IRBuilder *b, const char *name, IRType *ret){
     b->cur_func = ir_func_new(b->m, name, ret);
     b->next_vreg = 0;
@@ -263,6 +270,22 @@ IRValue *ir_gep_field(IRBuilder *b, IRType *st, IRValue *base, uint32_t fld){
 }
 
 /* --- Strings --- */
+IRValue *ir_alloca_type(IRBuilder *b, IRType *t){
+    uint32_t sz = 4;
+    switch(t->kind){
+        case TY_I8: sz=1; break;
+        case TY_I16: sz=2; break;
+        case TY_I32: case TY_F32: sz=4; break;
+        case TY_I64: case TY_F64: case TY_PTR: sz=8; break;
+        case TY_STRUCT: sz=t->u.struct_.size; break;
+        case TY_ARRAY:  sz=t->u.array.size; break;
+        default: sz=4; break;
+    }
+    return ir_alloca(b, t, sz);
+}
+IRValue *ir_str_cstr(IRBuilder *b, const char *s){
+    return ir_str(b, s, (uint32_t)strlen(s));
+}
 IRValue *ir_str(IRBuilder *b, const char *bytes, uint32_t len){
     int idx = ir_add_string(b->m, bytes, len);
     int ix = ir_emit(b->cur_block, OP_STR, ir_type_i32(), idx, -1, -1, -1, 1);
@@ -316,6 +339,13 @@ IRValue *ir_phi(IRBuilder *b, IRType *t, IRValue *v0, IRBlock *b0, IRValue *v1, 
     e->label  = b0 ? b0->name : "entry";
     e->label2 = b1 ? b1->name : "entry";
     return d;
+}
+IRValue *ir_phi_n(IRBuilder *b, IRType *t, int n, IRValue **vals, IRBlock **blocks){
+    if(n <= 2) return ir_phi(b, t,
+                             n>0?vals[0]:NULL, n>0?blocks[0]:NULL,
+                             n>1?vals[1]:NULL, n>1?blocks[1]:NULL);
+    /* For now, only 2 preds supported by backends — fall back to first 2. */
+    return ir_phi(b, t, vals[0], blocks[0], vals[1], blocks[1]);
 }
 void ir_ret(IRBuilder *b, IRValue *v){
     if(!v){

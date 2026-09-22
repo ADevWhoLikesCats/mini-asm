@@ -32,7 +32,11 @@ IRBuilder *ir_builder_new(IRModule *m);
 void       ir_builder_free(IRBuilder *b);
 
 IRFunc  *ir_builder_func(IRBuilder *b, const char *name, IRType *ret);
+IRFunc  *ir_builder_func(IRBuilder *b, const char *name, IRType *ret);
 void     ir_builder_params(IRBuilder *b, IRFunc *f, IRType **types, int n);
+/* Returns an IRValue* that refers to parameter i of the current function
+   (matches the `%arg0, %arg1, ...` convention used by the text parser). */
+IRValue *ir_arg(IRBuilder *b, int i);
 IRBlock *ir_builder_block(IRBuilder *b, IRFunc *f, const char *name);
 void     ir_set_insert(IRBuilder *b, IRBlock *blk);
 IRBlock *ir_current_block(IRBuilder *b);
@@ -74,7 +78,10 @@ IRValue *ir_gep   (IRBuilder *b, IRType *elem, IRValue *base, IRValue *idx);
 IRValue *ir_gep_field(IRBuilder *b, IRType *struct_ty, IRValue *base, uint32_t field_index);
 
 /* --- Strings --- */
+IRValue *ir_alloca_type(IRBuilder *b, IRType *t);
 IRValue *ir_str(IRBuilder *b, const char *bytes, uint32_t len);
+/* Convenience: string literal from a NUL-terminated C string (len computed). */
+IRValue *ir_str_cstr(IRBuilder *b, const char *s);
 
 /* --- Conversions --- */
 IRValue *ir_zext   (IRBuilder *b, IRType *from, IRType *to, IRValue *x);
@@ -91,6 +98,9 @@ IRValue *ir_fptrunc(IRBuilder *b, IRType *from, IRType *to, IRValue *x);
 void     ir_br (IRBuilder *b, IRBlock *dest);
 void     ir_cbr(IRBuilder *b, IRValue *cond, IRBlock *t, IRBlock *f);
 IRValue *ir_phi(IRBuilder *b, IRType *t, IRValue *v0, IRBlock *b0, IRValue *v1, IRBlock *b1);
+/* Arbitrary-predecessor phi. Actually only the first 2 preds are used by the
+   current backends, but this is here for future extension. */
+IRValue *ir_phi_n(IRBuilder *b, IRType *t, int n, IRValue **vals, IRBlock **blocks);
 void     ir_ret(IRBuilder *b, IRValue *v);
 void     ir_unreachable(IRBuilder *b);
 
