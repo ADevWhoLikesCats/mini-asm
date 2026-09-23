@@ -253,3 +253,30 @@ backend, not a world-class optimizing compiler.
 ## License
 
 Apache 2.0. See `LICENSE`.
+
+## Embedding
+
+`make lib` produces `libmini-asm.a`, containing the IR, parser, builder,
+optimizer, regallocator, and all five backends. A downstream compiler can
+link against it:
+
+    #include "ir.h"
+    #include "ir_builder.h"
+    #include "backend.h"
+
+    IRModule  *m = ir_module_new();
+    IRBuilder *b = ir_builder_new(m);
+    /* ... build IR ... */
+    const TargetDesc *t = backend_lookup("x86_64");
+    FILE *f = fopen("out.s", "w");
+    target_emit_dispatch(m, f, t);
+    fclose(f);
+
+Compile with:
+
+    gcc -I/path/to/mini-asm/include yourcode.c -L/path/to/mini-asm -lmini-asm
+
+Or install system-wide:
+
+    sudo make install             # to /usr/local
+    sudo make install PREFIX=/usr # to /usr
