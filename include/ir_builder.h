@@ -106,6 +106,11 @@ IRValue *ir_fptoui (IRBuilder *b, IRType *from, IRType *to, IRValue *x);
 IRValue *ir_fpext  (IRBuilder *b, IRType *from, IRType *to, IRValue *x);
 IRValue *ir_fptrunc(IRBuilder *b, IRType *from, IRType *to, IRValue *x);
 
+/* --- Varargs (callee side) --- */
+IRValue *ir_va_start(IRBuilder *b);
+IRValue *ir_va_arg  (IRBuilder *b, IRType *t, IRValue *ap);
+void     ir_va_end  (IRBuilder *b, IRValue *ap);
+
 /* --- Control flow --- */
 void     ir_br (IRBuilder *b, IRBlock *dest);
 void     ir_cbr(IRBuilder *b, IRValue *cond, IRBlock *t, IRBlock *f);

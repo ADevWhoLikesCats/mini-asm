@@ -149,6 +149,16 @@ static int count_maxv(IRFunc *f){
 
 static int assign_allocas(IRFunc *f, int base){
     int cursor=base;
+    /* If vararg, reserve the va_list (24 bytes) then the register save
+       area (48 bytes) immediately after the vreg slots and before allocas.
+       These offsets are rbp-relative positive values (i.e., addresses are
+       -offset(%rbp)). */
+    if(f->vararg){
+        cursor += 24;
+        f->va_list_off = cursor;
+        cursor += 48;
+        f->vararg_save_off = cursor;
+    }
     for(uint32_t j=0;j<f->nblocks;j++){
         IRBlock *b=&f->blocks[j];
         for(uint32_t k=0;k<b->ninstrs;k++){
@@ -199,6 +209,15 @@ int x86_64_emit(IRModule *m, FILE *o, const TargetDesc *t){
         for(uint32_t p=0;p<f->nparams && p<6;p++){
             int pv = PARAM_BASE + (int)p;
             fprintf(o,"  movq %s, %d(%%rbp)\n",areg[p],vreg_off(pv));
+        }
+        /* Vararg: also dump ALL 6 incoming integer arg registers into the
+           register save area, so va_arg can walk them. The save area starts
+           at rbp-(8*(maxv+1)+48). We compute the base from nlocals. */
+        if(f->vararg){
+            int save_base = f->vararg_save_off;
+            for(int r=0;r<6;r++){
+                fprintf(o,"  movq %s, %d(%%rbp)\n", areg[r], -save_base + 8*r);
+            }
         }
         for(uint32_t p=6;p<f->nparams;p++){
             int pv = PARAM_BASE + (int)p;
@@ -564,6 +583,59 @@ int x86_64_emit(IRModule *m, FILE *o, const TargetDesc *t){
                 case OP_BR:
                     if(in->label)fprintf(o,"  jmp .L%s_%s\n",f->name,in->label);
                     break;
+                                case OP_VA_START: {
+                    int valist_base = f->va_list_off;
+                    int save_base   = f->vararg_save_off;
+                    int gp_off = (int)f->nparams * 8;
+                    if(gp_off > 48) gp_off = 48;
+                    fprintf(o,"  leaq -%d(%%rbp), %%rax\n", valist_base);
+                    fprintf(o,"  movl $%d, 0(%%rax)\n", gp_off);
+                    fprintf(o,"  movl $48, 4(%%rax)\n");
+                    fprintf(o,"  leaq 16(%%rbp), %%rcx\n  movq %%rcx, 8(%%rax)\n");
+                    fprintf(o,"  leaq -%d(%%rbp), %%rcx\n  movq %%rcx, 16(%%rax)\n", save_base);
+                    if(in->dst>=0){
+                        char db[64];
+                        const char *dd = vop_str(in->dst, &ra, db);
+                        fprintf(o,"  movq %%rax, %s\n", dd);
+                    }
+                    break;
+                }
+                case OP_VA_ARG: {
+                    char ab[64];
+                    const char *aps = vop_str(in->args[0], &ra, ab);
+                    int sz=type_size(in->type);
+                    int adv = 8;
+                    unsigned uid = (unsigned)(in - f->blocks[0].instrs);
+                    uid ^= (unsigned)in->dst * 2654435761u;
+                    uid &= 0x7fffffff;   /* keep it positive for label name */
+                    fprintf(o,"  movq %s, %%rax\n", aps);
+                    fprintf(o,"  movl 0(%%rax), %%ecx\n");
+                    fprintf(o,"  cmpl $48, %%ecx\n");
+                    fprintf(o,"  jae .Lva_ovf_%d\n", uid);
+                    fprintf(o,"  movq 16(%%rax), %%rdx\n");
+                    fprintf(o,"  movq (%%rdx,%%rcx), %%rbx\n");
+                    fprintf(o,"  addl $%d, %%ecx\n", adv);
+                    fprintf(o,"  movl %%ecx, 0(%%rax)\n");
+                    fprintf(o,"  jmp .Lva_done_%d\n", uid);
+                    fprintf(o,".Lva_ovf_%d:\n", uid);
+                    fprintf(o,"  movq 8(%%rax), %%rdx\n");
+                    fprintf(o,"  movq (%%rdx), %%rbx\n");
+                    fprintf(o,"  addq $%d, %%rdx\n", adv);
+                    fprintf(o,"  movq %%rdx, 8(%%rax)\n");
+                    fprintf(o,".Lva_done_%d:\n", uid);
+                    if(sz==1) fputs("  movsbq %bl, %rbx\n", o);
+                    else if(sz==2) fputs("  movswq %bx, %rbx\n", o);
+                    else if(sz==4) fputs("  movslq %ebx, %rbx\n", o);
+                    if(in->dst>=0){
+                        char db[64];
+                        const char *dd = vop_str(in->dst, &ra, db);
+                        fprintf(o,"  movq %%rbx, %s\n", dd);
+                    }
+                    break;
+                }
+                case OP_VA_END:
+                    break;
+
                 case OP_UNREACHABLE: fputs("  ud2\n",o); break;
                 default: break;
                 }

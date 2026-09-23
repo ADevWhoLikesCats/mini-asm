@@ -449,6 +449,28 @@ IRValue *ir_fptoui (IRBuilder *b, IRType *f, IRType *t, IRValue *x){ return emit
 IRValue *ir_fpext  (IRBuilder *b, IRType *f, IRType *t, IRValue *x){ return emit_conv(b,OP_FPEXT  ,f,t,x); }
 IRValue *ir_fptrunc(IRBuilder *b, IRType *f, IRType *t, IRValue *x){ return emit_conv(b,OP_FPTRUNC,f,t,x); }
 
+/* --- Varargs (callee side) --- */
+IRValue *ir_va_start(IRBuilder *b){
+    int ix = ir_emit(b->cur_block, OP_VA_START, ir_type_i32(), -1,-1,-1,-1, 0);
+    IRInstr *e = &b->cur_block->instrs[ix];
+    IRValue *d = new_vreg_val(b);
+    e->dst = d->vreg;
+    return d;
+}
+IRValue *ir_va_arg(IRBuilder *b, IRType *t, IRValue *ap){
+    int ix = ir_emit(b->cur_block, OP_VA_ARG, t, 0,-1,-1,-1, 1);
+    IRInstr *e = &b->cur_block->instrs[ix];
+    IRValue *d = new_vreg_val(b);
+    e->dst = d->vreg;
+    set_arg(e, 0, ap);
+    return d;
+}
+void ir_va_end(IRBuilder *b, IRValue *ap){
+    int ix = ir_emit(b->cur_block, OP_VA_END, ir_type_void(), 0,-1,-1,-1, 1);
+    IRInstr *e = &b->cur_block->instrs[ix];
+    set_arg(e, 0, ap);
+}
+
 /* --- Control flow --- */
 void ir_br(IRBuilder *b, IRBlock *dest){
     int ix = ir_emit(b->cur_block, OP_BR, NULL, -1,-1,-1,-1, 0);

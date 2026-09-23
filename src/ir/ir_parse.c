@@ -57,6 +57,7 @@ static IROpcode lookup(const char *n){
         {"zext",OP_ZEXT},{"sext",OP_SEXT},{"trunc",OP_TRUNC},{"gep",OP_GEP},{"str",OP_STR},
         {"sitofp",OP_SITOFP},{"uitofp",OP_UITOFP},{"fptosi",OP_FPTOSI},
         {"fptoui",OP_FPTOUI},{"fpext",OP_FPEXT},{"fptrunc",OP_FPTRUNC},
+        {"va_start",OP_VA_START},{"va_arg",OP_VA_ARG},{"va_end",OP_VA_END},
     };
     for(size_t i=0;i<sizeof T/sizeof *T;i++)if(!strcmp(n,T[i].n))return T[i].o;
     return (IROpcode)-1;
@@ -316,7 +317,7 @@ static IRModule *parse(FILE *f){
                     if(c==','){fgetc(f);continue;}
                     char pt[32];
                     word(f,pt,32);
-                    if(!strcmp(pt,"...")){ F->nparams |= 0x80000000u; continue; }
+                    if(!strcmp(pt,"...")){ F->vararg = 1; continue; }
                     F->nparams++;
                 }
             }
@@ -524,6 +525,34 @@ static IRModule *parse(FILE *f){
             B->instrs[ix].dst = dst;
             B->instrs[ix].kinds[0] = ARG_IMM;
             B->instrs[ix].args[0] = idx;
+            continue;
+        }
+
+        if(op==OP_VA_START){
+            /* %d = va_start -- dst holds a pointer to the va_list struct */
+            int ix = ir_emit(B, OP_VA_START, I32, -1, -1, -1, -1, 0);
+            B->instrs[ix].dst = dst;
+            continue;
+        }
+
+        if(op==OP_VA_ARG){
+            /* %d = va_arg %ap T */
+            parse_operand(f,&tmp,0);            /* the va_list ptr */
+            char t[32]; word(f,t,32);
+            tmp.type = lookup_ty(t);
+            int ix = ir_emit(B, OP_VA_ARG, tmp.type,
+                             tmp.args[0], -1, -1, -1, 1);
+            B->instrs[ix].kinds[0] = tmp.kinds[0];
+            B->instrs[ix].dst = dst;
+            continue;
+        }
+
+        if(op==OP_VA_END){
+            /* va_end %ap */
+            parse_operand(f,&tmp,0);
+            int ix = ir_emit(B, OP_VA_END, Tvoid,
+                             tmp.args[0], -1, -1, -1, 1);
+            B->instrs[ix].kinds[0] = tmp.kinds[0];
             continue;
         }
 

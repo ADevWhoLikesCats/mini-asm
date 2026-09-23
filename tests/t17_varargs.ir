@@ -1,0 +1,28 @@
+# EXPECT 55
+; sum_all(n, ...) — sums n varargs, then adds 100 to prove the named arg
+; actually, we'll define sum_all as variadic and call it from main
+func sum_all i32 (i32, ...) {
+block entry
+  %ap = va_start
+  %i = add i32 0 0
+  %sum = add i32 0 0
+  br loop
+block loop
+  %i2 = phi i32 %i entry %i3 body
+  %s2 = phi i32 %sum entry %s3 body
+  %c = icmp i32 slt %i2 %arg0
+  cbr %c body done
+block body
+  %v = va_arg %ap i32
+  %s3 = add i32 %s2 %v
+  %i3 = add i32 %i2 1
+  br loop
+block done
+  va_end %ap
+  ret i32 %s2
+}
+func main i32 {
+block entry
+  %r = call i32 sum_all(4, 10, 20, 15, 10)
+  ret i32 %r
+}
