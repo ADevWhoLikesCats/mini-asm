@@ -31,3 +31,4 @@ Thumbs.db
 core
 core.*
 *.log
+libmini-asm.a
