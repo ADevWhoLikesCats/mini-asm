@@ -69,7 +69,6 @@ int main(int argc, char **argv){
     snprintf(opath, sizeof opath, "%s/%s.o", outdir, base);
 
     IRModule *m = ir_parse_file(input);
-    if(getenv("CC_DUMP_IR")) ir_print(m, stderr);
     if(!m){ fprintf(stderr, "parse failed: %s\n", input); return 1; }
 
     FILE *s = fopen(spath, "w");
