@@ -396,6 +396,36 @@ int x86_emit(IRModule *m, FILE *o, const TargetDesc *t){
                 case OP_BR:
                     if(in->label)fprintf(o,"  jmp .L%s_%s\n",f->name,in->label);
                     break;
+                case OP_VA_START: {
+                    /* cdecl: all args on the stack. va_list is just a char*
+                       pointing at the first vararg. */
+                    int offset = 8 + 4 * (int)f->nparams;
+                    if(in->dst >= 0){
+                        char db[64]; const char *dd = vop_str(in->dst, &ra, db, sizeof db);
+                        fprintf(o, "  leal %d(%%ebp), %%eax\n", offset);
+                        fprintf(o, "  movl %%eax, %s\n", dd);
+                    }
+                    break;
+                }
+                case OP_VA_ARG: {
+                    char ab[64];
+                    const char *aps = vop_str(in->args[0], &ra, ab, sizeof ab);
+                    int sz = type_size(in->type);
+                    fprintf(o, "  movl %s, %%eax\n", aps);
+                    fprintf(o, "  movl (%%eax), %%edx\n");
+                    fprintf(o, "  addl $4, %%eax\n");
+                    fprintf(o, "  movl %%eax, %s\n", aps);
+                    if(sz == 1) fputs("  movsbl %dl, %edx\n", o);
+                    else if(sz == 2) fputs("  movswl %dx, %edx\n", o);
+                    if(in->dst >= 0){
+                        char db[64]; const char *dd = vop_str(in->dst, &ra, db, sizeof db);
+                        fprintf(o, "  movl %%edx, %s\n", dd);
+                    }
+                    break;
+                }
+                case OP_VA_END:
+                    break;
+
                 case OP_UNREACHABLE: fputs("  ud2\n",o); break;
 
                 case OP_FADD: case OP_FSUB: case OP_FMUL: case OP_FDIV: {
