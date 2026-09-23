@@ -5,6 +5,8 @@
 #include "targets/arm64.h"
 #include "targets/riscv.h"
 #include <string.h>
+
+int cc_libc_mode = 0;
 #include "opt.h"
 
 void opt_run(IRModule *m);

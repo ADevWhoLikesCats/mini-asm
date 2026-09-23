@@ -39,4 +39,6 @@ const char *regalloc_regname(int idx);
 const char *regalloc_name(const RegAlloc *ra, int idx);
 int      regalloc_nregs(void);
 
+extern int cc_libc_mode;
+
 #endif

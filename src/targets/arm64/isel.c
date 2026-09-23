@@ -618,7 +618,7 @@ int arm64_emit(IRModule *m, FILE *o, const TargetDesc *t){
     }
     int has_main = 0;
     for(uint32_t i=0;i<m->nfuncs;i++) if(!strcmp(m->funcs[i].name,"main")){ has_main=1; break; }
-    if(has_main){
+    if(has_main && !cc_libc_mode){
         fputs(".globl _start\n.type _start, %function\n_start:\n", o);
         fputs("  bl main\n", o);
         fputs("  mov x8, #93\n  svc #0\n", o);

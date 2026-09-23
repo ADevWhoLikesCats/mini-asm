@@ -1,7 +1,7 @@
 #include "ir.h"
 #include "ir_parse.h"
-#include "opt.h"
 #include "backend.h"
+#include "opt.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -25,39 +25,75 @@ static void mkdir_p(const char *path){
     mkdir(tmp, 0755);
 }
 
+static void usage(const char *prog){
+    fprintf(stderr,
+        "usage: %s [--libc] [-O0|-O1] [-o <dir>] <target> <input.ir> <output.o>\n"
+        "\n"
+        "targets: x86, x86_64, arm, arm64, riscv\n"
+        "flags:\n"
+        "  --libc      link with libc (uses cc driver; enables printf, malloc)\n"
+        "              without --libc, uses raw ld and needs no libc\n"
+        "  -O0         disable optimization passes\n"
+        "  -O1         enable constant folding + DCE (default)\n"
+        "  -o <dir>    output directory for .s and .o (default: build)\n"
+        "\n"
+        "env:\n"
+        "  CC_BACKEND_OUT=<dir>  same as -o\n"
+        "  CC_DUMP_IR=1          print IR to stderr before emitting\n",
+        prog);
+}
+
 int main(int argc, char **argv){
     const char *outdir = getenv("CC_BACKEND_OUT");
     if(!outdir) outdir = "build";
 
-    if(argc < 4){
-        fprintf(stderr,
-            "usage: %s <target> <input.ir> <output.o>\n"
-            "  or: %s -o <outdir> <target> <input.ir> <basename>\n"
-            "\n"
-            "targets: x86, x86_64, arm, arm64, riscv\n"
-            "env:     CC_BACKEND_OUT=<dir>  (default: build)\n",
-            argv[0], argv[0]);
+    int libc = 0;
+    int argi = 1;
+
+    /* Parse flags before the target name. */
+    while(argi < argc){
+        const char *a = argv[argi];
+        if(!strcmp(a, "--libc")){
+            libc = 1;
+            argi++;
+        } else if(!strcmp(a, "-O0")){
+            ir_opt_level = 0;
+            argi++;
+        } else if(!strcmp(a, "-O1")){
+            ir_opt_level = 1;
+            argi++;
+        } else if(!strcmp(a, "-o") && argi+1 < argc){
+            outdir = argv[argi+1];
+            argi += 2;
+        } else if(!strcmp(a, "-h") || !strcmp(a, "--help")){
+            usage(argv[0]);
+            return 0;
+        } else if(a[0] == '-' && a[1] != 0){
+            fprintf(stderr, "unknown flag: %s\n", a);
+            usage(argv[0]);
+            return 1;
+        } else {
+            break;   /* first non-flag arg: the target */
+        }
+    }
+
+    if(argc - argi < 3){
+        usage(argv[0]);
         return 1;
     }
 
-    const char *target_name, *input, *output;
-    if(!strcmp(argv[1], "-o") && argc >= 6){
-        outdir = argv[2];
-        target_name = argv[3];
-        input = argv[4];
-        output = argv[5];
-    } else {
-        target_name = argv[1];
-        input = argv[2];
-        output = argv[3];
-    }
+    const char *target_name = argv[argi];
+    const char *input       = argv[argi+1];
+    const char *output      = argv[argi+2];
 
     const TargetDesc *t = backend_lookup(target_name);
     if(!t){ fprintf(stderr, "unknown target: %s\n", target_name); return 1; }
 
+    cc_libc_mode = libc;
+
     mkdir_p(outdir);
 
-    /* Compute output paths: <outdir>/<basename>.s and <outdir>/<basename>.o */
+    /* Derive output basename (strip directory and .o suffix). */
     char base[512];
     const char *b = strrchr(output, '/');
     b = b ? b + 1 : output;
@@ -71,6 +107,7 @@ int main(int argc, char **argv){
 
     IRModule *m = ir_parse_file(input);
     if(!m){ fprintf(stderr, "parse failed: %s\n", input); return 1; }
+    if(getenv("CC_DUMP_IR")) ir_print(m, stderr);
 
     FILE *s = fopen(spath, "w");
     if(!s){ perror("fopen"); return 1; }
@@ -82,6 +119,6 @@ int main(int argc, char **argv){
     int rc = system(cmd);
     if(rc){ fprintf(stderr, "assembler failed\n"); return rc; }
 
-    printf("%s -> %s\n", input, opath);
+    printf("%s -> %s%s\n", input, opath, libc ? " (libc mode)" : "");
     return 0;
 }
