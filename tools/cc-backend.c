@@ -1,5 +1,6 @@
 #include "ir.h"
 #include "ir_parse.h"
+#include "opt.h"
 #include "backend.h"
 #include <stdio.h>
 #include <stdlib.h>

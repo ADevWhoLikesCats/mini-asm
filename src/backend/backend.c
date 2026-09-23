@@ -5,6 +5,7 @@
 #include "targets/arm64.h"
 #include "targets/riscv.h"
 #include <string.h>
+#include "opt.h"
 
 void opt_run(IRModule *m);
 void ir_print(IRModule *m, FILE *o);
@@ -18,7 +19,8 @@ const TargetDesc *backend_lookup(const char*n){
   return NULL;
 }
 int target_emit_dispatch(IRModule*m,FILE*o,const TargetDesc*t){
-    opt_run(m);
+    ir_optimize(m);
+    ir_optimize(m);
     if(getenv("CC_DUMP_IR")) ir_print(m, stderr);
   if(!t)return 1;
   if(!strcmp(t->name,"x86"))return x86_emit(m,o,t);

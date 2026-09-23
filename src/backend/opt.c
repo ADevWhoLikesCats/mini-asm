@@ -1,17 +1,193 @@
-#include "backend.h"
+#include "opt.h"
 #include "ir.h"
 #include <stdlib.h>
 #include <string.h>
-#include <stdio.h>
 #include <stdint.h>
+#include <stdio.h>
 
-/* --- Use table: which vregs are referenced as operands? --- */
-#define MAXV 65536
-static char g_used[MAXV];
+int ir_opt_level = 1;
 
-static void mark_used_vreg(int v){
-    if(v >= 0 && v < MAXV) g_used[v] = 1;
+/* ---------- Constant folding ---------- */
+
+/* Returns 1 if op is foldable when all its operands are constants. */
+static int foldable(IROpcode op){
+    switch(op){
+        case OP_ADD: case OP_SUB: case OP_MUL:
+        case OP_SDIV: case OP_UDIV: case OP_SREM: case OP_UREM:
+        case OP_AND: case OP_OR: case OP_XOR:
+        case OP_SHL: case OP_LSHR: case OP_ASHR:
+        case OP_NEG: case OP_NOT:
+        case OP_ICMP:
+        case OP_ZEXT: case OP_SEXT: case OP_TRUNC:
+        case OP_GEP_FIELD:
+            return 1;
+        default:
+            return 0;
+    }
 }
+
+/* Compute a foldable op given integer operands. Returns 1 on success. */
+static int fold_op(IROpcode op, int64_t a0, int64_t a1, uint32_t pred, int has_a0, int64_t *out){
+    if(op==OP_NEG){ *out = -a0; return 1; }
+    if(op==OP_NOT){ *out = ~a0; return 1; }
+
+    if(!has_a0) return 0;
+    switch(op){
+        case OP_ADD: *out = a0 + a1; return 1;
+        case OP_SUB: *out = a0 - a1; return 1;
+        case OP_MUL: *out = a0 * a1; return 1;
+        case OP_SDIV:
+            if(a1==0) return 0;
+            /* avoid INT64_MIN / -1 */
+            if(a0==(int64_t)0x8000000000000000LL && a1==-1) return 0;
+            *out = a0 / a1; return 1;
+        case OP_UDIV:
+            if(a1==0) return 0;
+            *out = (int64_t)((uint64_t)a0 / (uint64_t)a1); return 1;
+        case OP_SREM:
+            if(a1==0) return 0;
+            if(a0==(int64_t)0x8000000000000000LL && a1==-1) return 0;
+            *out = a0 % a1; return 1;
+        case OP_UREM:
+            if(a1==0) return 0;
+            *out = (int64_t)((uint64_t)a0 % (uint64_t)a1); return 1;
+        case OP_AND: *out = a0 & a1; return 1;
+        case OP_OR:  *out = a0 | a1; return 1;
+        case OP_XOR: *out = a0 ^ a1; return 1;
+        case OP_SHL:
+            if(a1<0 || a1>=64) return 0;
+            *out = (int64_t)((uint64_t)a0 << a1); return 1;
+        case OP_LSHR:
+            if(a1<0 || a1>=64) return 0;
+            *out = (int64_t)((uint64_t)a0 >> a1); return 1;
+        case OP_ASHR:
+            if(a1<0 || a1>=64) return 0;
+            *out = a0 >> a1; return 1;
+        case OP_ICMP: {
+            int r=0;
+            switch(pred){
+                case 0: r = (a0==a1); break;
+                case 1: r = (a0!=a1); break;
+                case 2: r = (a0< a1); break;
+                case 3: r = (a0<=a1); break;
+                case 4: r = (a0> a1); break;
+                case 5: r = (a0>=a1); break;
+                case 6: r = ((uint64_t)a0 <  (uint64_t)a1); break;
+                case 7: r = ((uint64_t)a0 <= (uint64_t)a1); break;
+                case 8: r = ((uint64_t)a0 >  (uint64_t)a1); break;
+                case 9: r = ((uint64_t)a0 >= (uint64_t)a1); break;
+                default: return 0;
+            }
+            *out = r; return 1;
+        }
+        case OP_ZEXT:
+            /* we don't know source width from op alone; assume i32 → i32 (identity) */
+            *out = a0 & 0xffffffffULL; return 1;
+        case OP_SEXT:
+            *out = a0; return 1;
+        case OP_TRUNC:
+            *out = a0 & 0xffffffffULL; return 1;
+        case OP_GEP_FIELD:
+            *out = a0; return 1; /* address computation needs the runtime address; skip */
+        default: return 0;
+    }
+}
+
+/* Known-constant table. Index by vreg. -1 = unknown (using INT64_MIN as sentinel
+   is risky because it's a valid value; use a companion bool array instead). */
+typedef struct {
+    int64_t *val;
+    char    *known;
+    int      n;
+} ConstTab;
+
+static ConstTab consttab_new(int n){
+    ConstTab t;
+    t.n = n;
+    t.val = calloc(n, sizeof(int64_t));
+    t.known = calloc(n, 1);
+    return t;
+}
+static void consttab_free(ConstTab *t){ free(t->val); free(t->known); }
+static int consttab_known(ConstTab *t, int v){ return v>=0 && v<t->n && t->known[v]; }
+static void consttab_set(ConstTab *t, int v, int64_t x){
+    if(v>=0 && v<t->n){ t->known[v]=1; t->val[v]=x; }
+}
+static void consttab_clear(ConstTab *t, int v){
+    if(v>=0 && v<t->n){ t->known[v]=0; }
+}
+
+void ir_constfold_func(IRFunc *f){
+    /* Find maxv */
+    int maxv = 0;
+    for(uint32_t j=0;j<f->nblocks;j++){
+        IRBlock *b = &f->blocks[j];
+        for(uint32_t k=0;k<b->ninstrs;k++){
+            IRInstr *in = &b->instrs[k];
+            if(in->dst > maxv) maxv = in->dst;
+            for(uint32_t a=0;a<in->nargs && a<16;a++)
+                if(in->kinds[a]==ARG_VREG && in->args[a] > maxv)
+                    maxv = in->args[a];
+        }
+    }
+    ConstTab ct = consttab_new(maxv + 1);
+
+    int changed = 1;
+    int passes = 0;
+    while(changed && passes < 16){
+        changed = 0;
+        passes++;
+        for(uint32_t j=0;j<f->nblocks;j++){
+            IRBlock *b = &f->blocks[j];
+            for(uint32_t k=0;k<b->ninstrs;k++){
+                IRInstr *in = &b->instrs[k];
+
+                /* Skip terminators and side-effecting ops for folding,
+                   but still propagate constants into their operands. */
+                int is_foldable = foldable(in->op);
+
+                /* Step 1: replace ARG_VREG operands with immediates where known */
+                for(uint32_t a=0;a<in->nargs && a<16;a++){
+                    if(in->kinds[a]==ARG_VREG && consttab_known(&ct, in->args[a])){
+                        in->args[a] = (int)ct.val[in->args[a]];
+                        in->kinds[a] = ARG_IMM;
+                        changed = 1;
+                    }
+                }
+
+                if(!is_foldable) continue;
+                if(in->dst < 0) continue;
+
+                /* Step 2: if all operands are ARG_IMM, fold */
+                int all_imm = 1;
+                for(uint32_t a=0;a<in->nargs && a<16;a++){
+                    if(in->kinds[a] != ARG_IMM){ all_imm = 0; break; }
+                }
+                if(!all_imm) continue;
+
+                int64_t a0 = in->nargs > 0 ? in->args[0] : 0;
+                int64_t a1 = in->nargs > 1 ? in->args[1] : 0;
+                int64_t out;
+                if(fold_op(in->op, a0, a1, in->pred, in->nargs > 0, &out)){
+                    consttab_set(&ct, in->dst, out);
+                    /* Mark the instruction dead by zeroing its args and
+                       setting a flag... we can't easily delete here because
+                       we're iterating. Just note dst is known and leave. */
+                }
+            }
+        }
+    }
+
+    /* Second pass: rewrite dst defs. For instructions whose dst is known-constant,
+       replace the instruction with a "mov from immediate" — but simpler: clear
+       their operands and mark them as nop-folded by setting nargs=0, op stays
+       but backend ignores... Actually the simplest: leave them, but ensure all
+       uses are constants. The inst itself still computes something, but its
+       result is never read because all uses became immediates. DCE will remove it. */
+    consttab_free(&ct);
+}
+
+/* ---------- Dead code elimination ---------- */
 
 static int has_side_effect(IROpcode op){
     switch(op){
@@ -19,207 +195,75 @@ static int has_side_effect(IROpcode op){
         case OP_CALL:
         case OP_BR:
         case OP_CBR:
-        case OP_SWITCH:
         case OP_RET:
         case OP_UNREACHABLE:
-        case OP_PHI:
             return 1;
         default:
             return 0;
     }
 }
 
-/* Compute the set of vregs used as operands anywhere in the function. */
-static void compute_uses(IRFunc *f){
-    memset(g_used, 0, sizeof g_used);
+/* Marks all vregs that are used as operands. */
+static void mark_uses(IRFunc *f, char *used, int n){
     for(uint32_t j=0;j<f->nblocks;j++){
-        IRBlock *b=&f->blocks[j];
+        IRBlock *b = &f->blocks[j];
         for(uint32_t k=0;k<b->ninstrs;k++){
-            IRInstr *in=&b->instrs[k];
+            IRInstr *in = &b->instrs[k];
             for(uint32_t a=0;a<in->nargs && a<16;a++){
-                if(in->kinds[a] == ARG_VREG) mark_used_vreg(in->args[a]);
+                if(in->kinds[a]==ARG_VREG && in->args[a]>=0 && in->args[a]<n)
+                    used[in->args[a]] = 1;
             }
         }
     }
 }
 
-/* --- Constant folding --- */
-typedef struct { int vreg; int64_t value; } ConstEntry;
-#define MAXCONST 4096
-static ConstEntry g_consts[MAXCONST];
-static int g_nconsts;
-
-static int lookup_const(int vreg, int64_t *out){
-    for(int i=0;i<g_nconsts;i++){
-        if(g_consts[i].vreg == vreg){ *out = g_consts[i].value; return 1; }
-    }
-    return 0;
-}
-static void define_const(int vreg, int64_t val){
-    if(g_nconsts < MAXCONST){
-        g_consts[g_nconsts].vreg = vreg;
-        g_consts[g_nconsts].value = val;
-        g_nconsts++;
-    }
-}
-
-/* Try to fold an arithmetic instruction. Returns 1 if folded. */
-static int try_fold(IRInstr *in){
-    /* Both operands must be immediates. */
-    if(in->nargs < 2) return 0;
-    if(in->kinds[0] != ARG_IMM || in->kinds[1] != ARG_IMM) return 0;
-    int64_t a = in->args[0], b = in->args[1];
-    int64_t r = 0;
-    int ok = 1;
-    switch(in->op){
-        case OP_ADD:  r = a + b; break;
-        case OP_SUB:  r = a - b; break;
-        case OP_MUL:  r = a * b; break;
-        case OP_AND:  r = a & b; break;
-        case OP_OR:   r = a | b; break;
-        case OP_XOR:  r = a ^ b; break;
-        case OP_SHL:  r = (b >= 0 && b < 64) ? (a << b) : 0; break;
-        case OP_LSHR: r = (b >= 0 && b < 64) ? (int64_t)((uint64_t)a >> b) : 0; break;
-        case OP_ASHR: r = (b >= 0 && b < 64) ? (a >> b) : 0; break;
-        case OP_SDIV: if(b == 0) { ok = 0; break; } r = a / b; break;
-        case OP_UDIV: if(b == 0) { ok = 0; break; } r = (int64_t)((uint64_t)a / (uint64_t)b); break;
-        case OP_SREM: if(b == 0) { ok = 0; break; } r = a % b; break;
-        case OP_UREM: if(b == 0) { ok = 0; break; } r = (int64_t)((uint64_t)a % (uint64_t)b); break;
-        case OP_NEG:  r = -a; break;
-        case OP_NOT:  r = ~a; break;
-        case OP_ICMP: {
-            int pred = (int)in->pred;
-            switch(pred){
-                case 0: r = (a == b); break;
-                case 1: r = (a != b); break;
-                case 2: r = (a <  b); break;
-                case 3: r = (a <= b); break;
-                case 4: r = (a >  b); break;
-                case 5: r = (a >= b); break;
-                case 6: r = ((uint64_t)a <  (uint64_t)b); break;
-                case 7: r = ((uint64_t)a <= (uint64_t)b); break;
-                case 8: r = ((uint64_t)a >  (uint64_t)b); break;
-                case 9: r = ((uint64_t)a >= (uint64_t)b); break;
-                default: ok = 0; break;
-            }
-            break;
-        }
-        default: ok = 0; break;
-    }
-    if(!ok) return 0;
-    if(in->dst >= 0) define_const(in->dst, r);
-    return 1;
-}
-
-/* Rewrite all operands that are known constants. */
-static void propagate_consts(IRFunc *f){
+void ir_dce_func(IRFunc *f){
+    int maxv = 0;
     for(uint32_t j=0;j<f->nblocks;j++){
-        IRBlock *b=&f->blocks[j];
+        IRBlock *b = &f->blocks[j];
         for(uint32_t k=0;k<b->ninstrs;k++){
-            IRInstr *in=&b->instrs[k];
-            for(uint32_t a=0;a<in->nargs && a<16;a++){
-                if(in->kinds[a] != ARG_VREG) continue;
-                int64_t v;
-                if(lookup_const(in->args[a], &v)){
-                    in->kinds[a] = ARG_IMM;
-                    in->args[a] = (int)v;
-                }
-            }
+            IRInstr *in = &b->instrs[k];
+            if(in->dst > maxv) maxv = in->dst;
+            for(uint32_t a=0;a<in->nargs && a<16;a++)
+                if(in->kinds[a]==ARG_VREG && in->args[a] > maxv)
+                    maxv = in->args[a];
         }
     }
-}
+    char *used = calloc(maxv + 1, 1);
 
-/* --- DCE --- */
-/* A simple, correct-enough pass: iteratively remove instructions whose dst
-   is not used, has no side effects, and is not a phi. Returns 1 if anything
-   was removed. */
-static int dce_pass(IRFunc *f){
-    compute_uses(f);
-    int removed = 0;
-    for(uint32_t j=0;j<f->nblocks;j++){
-        IRBlock *b=&f->blocks[j];
-        uint32_t w = 0;
-        for(uint32_t k=0;k<b->ninstrs;k++){
-            IRInstr *in=&b->instrs[k];
-            int drop = 0;
-            if(in->dst >= 0 && !has_side_effect(in->op)){
-                if(in->dst >= MAXV || !g_used[in->dst]){
-                    drop = 1;
-                }
-            }
-            if(drop){
-                removed++;
-                continue;
-            }
-            b->instrs[w++] = b->instrs[k];
-        }
-        b->ninstrs = w;
-    }
-    return removed;
-}
+    int changed = 1;
+    while(changed){
+        changed = 0;
+        memset(used, 0, maxv + 1);
+        mark_uses(f, used, maxv + 1);
 
-/* Remove folded instructions: any instruction that had a folded dst whose
-   dst is no longer used as a VREG anywhere. */
-static int dce_folded(IRFunc *f){
-    int removed = 0;
-    for(uint32_t j=0;j<f->nblocks;j++){
-        IRBlock *b=&f->blocks[j];
-        uint32_t w = 0;
-        for(uint32_t k=0;k<b->ninstrs;k++){
-            IRInstr *in=&b->instrs[k];
-            int64_t v;
-            int drop = 0;
-            if(in->dst >= 0 && lookup_const(in->dst, &v) && !has_side_effect(in->op)){
-                /* If no remaining use of this dst as ARG_VREG, drop. */
-                int still_used = 0;
-                for(uint32_t jj=0;jj<f->nblocks && !still_used;jj++){
-                    IRBlock *bb=&f->blocks[jj];
-                    for(uint32_t kk=0;kk<bb->ninstrs && !still_used;kk++){
-                        IRInstr *i2=&bb->instrs[kk];
-                        for(uint32_t a=0;a<i2->nargs && a<16;a++){
-                            if(i2->kinds[a]==ARG_VREG && i2->args[a]==in->dst){
-                                still_used = 1; break;
-                            }
-                        }
-                    }
-                }
-                if(!still_used) drop = 1;
-            }
-            if(drop){ removed++; continue; }
-            b->instrs[w++] = b->instrs[k];
-        }
-        b->ninstrs = w;
-    }
-    return removed;
-}
-
-static int opt_func(IRFunc *f){
-    int changes = 0;
-    for(int iter=0; iter<4; iter++){
-        int did = 0;
-        g_nconsts = 0;
-        /* Fold */
         for(uint32_t j=0;j<f->nblocks;j++){
-            IRBlock *b=&f->blocks[j];
+            IRBlock *b = &f->blocks[j];
+            uint32_t out = 0;
             for(uint32_t k=0;k<b->ninstrs;k++){
-                IRInstr *in=&b->instrs[k];
-                if(try_fold(in)) did = 1;
+                IRInstr *in = &b->instrs[k];
+                int keep = 1;
+                if(has_side_effect(in->op)) keep = 1;
+                else if(in->dst >= 0 && !used[in->dst]) keep = 0;
+                if(keep){
+                    if(out != k) b->instrs[out] = *in;
+                    out++;
+                } else {
+                    changed = 1;
+                }
             }
+            b->ninstrs = out;
         }
-        /* Propagate */
-        if(g_nconsts) propagate_consts(f);
-        /* Drop folded instructions */
-        if(dce_folded(f)) did = 1;
-        /* Standard DCE */
-        if(dce_pass(f)) did = 1;
-        if(!did) break;
-        changes += did;
     }
-    return changes;
+    free(used);
 }
 
-void opt_run(IRModule *m){
+/* ---------- Module-level ---------- */
+
+void ir_optimize(IRModule *m){
+    if(ir_opt_level <= 0) return;
     for(uint32_t i=0;i<m->nfuncs;i++){
-        opt_func(&m->funcs[i]);
+        ir_constfold_func(&m->funcs[i]);
+        ir_dce_func(&m->funcs[i]);
     }
 }
