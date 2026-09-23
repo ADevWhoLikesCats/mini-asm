@@ -6,12 +6,15 @@ build/
 *.so.*
 *.s
 cc-backend
-bt_add
-bt_loop
-bt_array
-bt_hello
 
-# editor
+# test binaries (tools/*.c produce same-named binaries at repo root)
+bt_add
+bt_printf
+bt_struct
+bt_params
+bt_*
+
+# editor / IDE
 .vscode/
 .idea/
 *.swp
