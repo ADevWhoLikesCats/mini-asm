@@ -1,0 +1,18 @@
+# EXPECT 10
+type Point = { i32, i32 }
+func init_point void (ptr) {
+block entry
+  %f0 = gep Point %arg0 0 field
+  %f1 = gep Point %arg0 1 field
+  store i32 10, %f0
+  store i32 32, %f1
+  ret void
+}
+func main i32 {
+block entry
+  %p = alloca Point
+  call void init_point(%p)
+  %f0 = gep Point %p 0 field
+  %v = load i32 %f0
+  ret i32 %v
+}

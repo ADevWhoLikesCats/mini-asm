@@ -50,3 +50,33 @@ code with a `# EXPECT N` first line.
 
 See `tests/*.ir` for examples. The builder API in `include/ir_builder.h`
 lets you construct IR programmatically from C.
+
+## Structs and aggregates
+
+Structs are passed and returned **by reference**. The caller allocates
+space with `alloca`, passes a pointer, and the callee reads/writes through
+that pointer. Struct copy is done with `store T %src, %dst` which lowers
+to a `memcpy` (see `tests/t15_struct_copy.ir`).
+
+Example:
+
+    type Point = { i32, i32 }
+    func init_point void (ptr) {
+    block entry
+      %f0 = gep Point %arg0 0 field
+      %f1 = gep Point %arg0 1 field
+      store i32 10, %f0
+      store i32 32, %f1
+      ret void
+    }
+    func main i32 {
+    block entry
+      %p = alloca Point
+      call void init_point(%p)
+      %f0 = gep Point %p 0 field
+      %v = load i32 %f0
+      ret i32 %v
+    }
+
+For a frontend that wants C-like by-value semantics, lower struct
+arguments to a `memcpy` into a fresh `alloca` at the call site.
