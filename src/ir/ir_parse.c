@@ -88,6 +88,16 @@ static void type_define(const char *n, IRType *t){
     if(!t->name) t->name = dupn(n, strlen(n));
 }
 
+static int is_aggregate_ty(IRType *t){
+    return t && (t->kind == TY_STRUCT || t->kind == TY_ARRAY);
+}
+static uint32_t agg_size(IRType *t){
+    if(!t) return 0;
+    if(t->kind == TY_STRUCT) return t->u.struct_.size;
+    if(t->kind == TY_ARRAY)  return t->u.array.size;
+    return 0;
+}
+
 static IRType *lookup_ty(const char *n){
     if(!strcmp(n,"void"))return Tvoid;
     IRTypeKind k;
@@ -468,7 +478,24 @@ static IRModule *parse(FILE *f){
             word(f,t,32);
             tmp.type=lookup_ty(t);
             parse_operand(f,&tmp,0);
-            emit_op(OP_LOAD,tmp.type,&tmp,dst,1);
+            if(is_aggregate_ty(tmp.type)){
+                /* Aggregate load: allocate a temp, memcpy from the pointer
+                   into it, and return a pointer to the temp in dst. */
+                uint32_t sz = agg_size(tmp.type);
+                IRInstr atmp; memset(&atmp,0,sizeof atmp);
+                atmp.type = tmp.type;
+                atmp.args[0] = (int)sz; atmp.kinds[0] = ARG_IMM;
+                int aix = emit_op(OP_ALLOCA, tmp.type, &atmp, dst, 1);
+                (void)aix;
+                /* Now emit memcpy: dst = alloca result (dst vreg), src = ptr operand */
+                int mix = ir_emit(B, OP_MEMCPY, NULL, 0, 0, (int)sz, 0, 3);
+                IRInstr *me = &B->instrs[mix];
+                me->kinds[0]=ARG_VREG; me->args[0]=dst;
+                me->kinds[1]=tmp.kinds[0]; me->args[1]=tmp.args[0];
+                me->kinds[2]=ARG_IMM; me->args[2]=(int)sz;
+            } else {
+                emit_op(OP_LOAD,tmp.type,&tmp,dst,1);
+            }
             continue;
         }
 
@@ -478,7 +505,16 @@ static IRModule *parse(FILE *f){
             tmp.type=lookup_ty(t);
             parse_operand(f,&tmp,0);
             parse_operand(f,&tmp,1);
-            emit_op(OP_STORE,tmp.type,&tmp,-1,2);
+            if(is_aggregate_ty(tmp.type)){
+                uint32_t sz = agg_size(tmp.type);
+                int mix = ir_emit(B, OP_MEMCPY, NULL, 0, 0, (int)sz, 0, 3);
+                IRInstr *me = &B->instrs[mix];
+                me->kinds[0]=tmp.kinds[1]; me->args[0]=tmp.args[1];  /* dst = store's ptr */
+                me->kinds[1]=tmp.kinds[0]; me->args[1]=tmp.args[0];  /* src = value ptr */
+                me->kinds[2]=ARG_IMM; me->args[2]=(int)sz;
+            } else {
+                emit_op(OP_STORE,tmp.type,&tmp,-1,2);
+            }
             continue;
         }
 

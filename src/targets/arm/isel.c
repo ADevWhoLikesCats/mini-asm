@@ -401,6 +401,23 @@ int arm_emit(IRModule *m, FILE *o, const TargetDesc *t){
                     }
                     break;
                 }
+                case OP_MEMCPY: {
+                    char a0b[64], a1b[64];
+                    const char *a0 = op_str(in,0,&ra,a0b,sizeof a0b);
+                    const char *a1 = op_str(in,1,&ra,a1b,sizeof a1b);
+                    int size = in->args[2];
+                    load_to(o, a0, "r2");
+                    load_to(o, a1, "r3");
+                    int n4 = size / 4, rem = size % 4;
+                    for(int i=0;i<n4;i++){
+                        fprintf(o,"  ldr r12, [r3, #%d]\n  str r12, [r2, #%d]\n", i*4, i*4);
+                    }
+                    for(int i=0;i<rem;i++){
+                        int off = n4*4 + i;
+                        fprintf(o,"  ldrb r12, [r3, #%d]\n  strb r12, [r2, #%d]\n", off, off);
+                    }
+                    break;
+                }
                 case OP_GEP_FIELD: {
                     const char *a0 = op_str(in,0,&ra,a0b,sizeof a0b);
                     load_to(o, a0, SCRATCH1);

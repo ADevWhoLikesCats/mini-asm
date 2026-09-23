@@ -462,6 +462,17 @@ int x86_64_emit(IRModule *m, FILE *o, const TargetDesc *t){
                     else fputs("  movq %rax, (%rcx)\n",o);
                     break;
                 }
+                case OP_MEMCPY: {
+                    /* args[0] = dst ptr, args[1] = src ptr, args[2] = size (imm) */
+                    char a0b[32], a1b[32];
+                    const char *a0 = op_str(in,0,&ra,a0b);
+                    const char *a1 = op_str(in,1,&ra,a1b);
+                    int size = in->args[2];
+                    fprintf(o,"  movq %s, %%rdi\n", a0);
+                    fprintf(o,"  movq %s, %%rsi\n", a1);
+                    fprintf(o,"  movq $%d, %%rcx\n  rep movsb\n", size);
+                    break;
+                }
                 case OP_GEP: case OP_GEP_FIELD: {
                     char a0b[32];
                     const char *a0 = op_str(in,0,&ra,a0b);

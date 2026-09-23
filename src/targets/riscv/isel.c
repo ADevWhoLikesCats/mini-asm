@@ -423,6 +423,23 @@ int riscv_emit(IRModule *m, FILE *o, const TargetDesc *t){
                     }
                     break;
                 }
+                case OP_MEMCPY: {
+                    char a0b[64], a1b[64];
+                    const char *a0 = op_str(in,0,&ra,a0b,sizeof a0b);
+                    const char *a1 = op_str(in,1,&ra,a1b,sizeof a1b);
+                    int size = in->args[2];
+                    load_to(o, a0, "t0");
+                    load_to(o, a1, "t1");
+                    int n8 = size / 8, rem = size % 8;
+                    for(int i=0;i<n8;i++){
+                        fprintf(o,"  ld t2, %d(t1)\n  sd t2, %d(t0)\n", i*8, i*8);
+                    }
+                    for(int i=0;i<rem;i++){
+                        int off = n8*8 + i;
+                        fprintf(o,"  lb t2, %d(t1)\n  sb t2, %d(t0)\n", off, off);
+                    }
+                    break;
+                }
                 case OP_GEP_FIELD: {
                     const char *a0 = op_str(in,0,&ra,a0b,sizeof a0b);
                     load_to(o, a0, "t0");

@@ -239,6 +239,14 @@ void ir_store(IRBuilder *b, IRType *t, IRValue *val, IRValue *ptr){
     set_arg(e, 0, val);
     set_arg(e, 1, ptr);
 }
+void ir_memcpy(IRBuilder *b, IRValue *dst, IRValue *src, uint32_t size){
+    int ix = ir_emit(b->cur_block, OP_MEMCPY, NULL, 0, 0, (int)size, 0, 3);
+    IRInstr *e = &b->cur_block->instrs[ix];
+    set_arg(e, 0, dst);
+    set_arg(e, 1, src);
+    e->kinds[2] = ARG_IMM;
+    e->args[2]  = (int)size;
+}
 IRValue *ir_gep(IRBuilder *b, IRType *elem, IRValue *base, IRValue *idx){
     IRValue *r = emit2(b, OP_GEP, ir_type_i32(), base, idx);
     IRInstr *e = &b->cur_block->instrs[b->cur_block->ninstrs-1];

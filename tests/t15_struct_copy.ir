@@ -1,0 +1,20 @@
+# EXPECT 42
+type Point = { i32, i32 }
+func main i32 {
+block entry
+  %a = alloca Point
+  %b = alloca Point
+  %af0 = gep Point %a 0 field
+  %af1 = gep Point %a 1 field
+  store i32 10, %af0
+  store i32 32, %af1
+  ; copy struct a to b
+  store Point %a, %b
+  ; read b's fields
+  %bf0 = gep Point %b 0 field
+  %bf1 = gep Point %b 1 field
+  %v0 = load i32 %bf0
+  %v1 = load i32 %bf1
+  %sum = add i32 %v0 %v1
+  ret i32 %sum
+}

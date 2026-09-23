@@ -311,6 +311,16 @@ int x86_emit(IRModule *m, FILE *o, const TargetDesc *t){
                     else fputs("  movl %eax, (%ecx)\n",o);
                     break;
                 }
+                case OP_MEMCPY: {
+                    char a0b[64], a1b[64];
+                    const char *a0 = op_str(in,0,&ra,a0b,sizeof a0b);
+                    const char *a1 = op_str(in,1,&ra,a1b,sizeof a1b);
+                    int size = in->args[2];
+                    load_to(o, a0, "%edi");
+                    load_to(o, a1, "%esi");
+                    fprintf(o,"  movl $%d, %%ecx\n  rep movsb\n", size);
+                    break;
+                }
                 case OP_GEP: {
                     const char *a0 = op_str(in,0,&ra,a0b,sizeof a0b);
                     const char *a1 = op_str(in,1,&ra,a1b,sizeof a1b);

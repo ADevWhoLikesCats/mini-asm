@@ -74,6 +74,7 @@ IRValue *ir_fcmp(IRBuilder *b, IRType *t, int pred, IRValue *x, IRValue *y);
 IRValue *ir_alloca(IRBuilder *b, IRType *t, uint32_t bytes);
 IRValue *ir_load  (IRBuilder *b, IRType *t, IRValue *ptr);
 void     ir_store (IRBuilder *b, IRType *t, IRValue *val, IRValue *ptr);
+void     ir_memcpy(IRBuilder *b, IRValue *dst, IRValue *src, uint32_t size);
 IRValue *ir_gep   (IRBuilder *b, IRType *elem, IRValue *base, IRValue *idx);
 IRValue *ir_gep_field(IRBuilder *b, IRType *struct_ty, IRValue *base, uint32_t field_index);
 
