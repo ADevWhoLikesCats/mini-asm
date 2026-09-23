@@ -232,8 +232,21 @@ IRValue *ir_alloca(IRBuilder *b, IRType *t, uint32_t bytes){
     e->args[0]  = (int)bytes;
     return d;
 }
-IRValue *ir_load(IRBuilder *b, IRType *t, IRValue *ptr){ return emit1(b,OP_LOAD,t,ptr); }
+IRValue *ir_load(IRBuilder *b, IRType *t, IRValue *ptr){
+    if(t && (t->kind == TY_STRUCT || t->kind == TY_ARRAY)){
+        uint32_t sz = (t->kind==TY_STRUCT) ? t->u.struct_.size : t->u.array.size;
+        IRValue *tmp = ir_alloca(b, t, sz);
+        ir_memcpy(b, tmp, ptr, sz);
+        return tmp;
+    }
+    return emit1(b,OP_LOAD,t,ptr);
+}
 void ir_store(IRBuilder *b, IRType *t, IRValue *val, IRValue *ptr){
+    if(t && (t->kind == TY_STRUCT || t->kind == TY_ARRAY)){
+        uint32_t sz = (t->kind==TY_STRUCT) ? t->u.struct_.size : t->u.array.size;
+        ir_memcpy(b, ptr, val, sz);
+        return;
+    }
     int ix = ir_emit(b->cur_block, OP_STORE, t, 0, 0, 0, 0, 2);
     IRInstr *e = &b->cur_block->instrs[ix];
     set_arg(e, 0, val);
