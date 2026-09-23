@@ -12,6 +12,15 @@
 #define SCRATCH2 "x10"
 #define SCRATCH3 "x15"
 
+/* Emit "add <dst>, sp, #<off>" handling offsets > 4095 via tmp. */
+static void add_sp_imm(FILE *o, const char *dst, int off, const char *tmp){
+    if(off >= 0 && off <= 4095){
+        fprintf(o, "  add %s, sp, #%d\n", dst, off);
+    } else {
+        fprintf(o, "  mov %s, #%d\n  add %s, sp, %s\n", tmp, off, dst, tmp);
+    }
+}
+
 static int type_size(IRType *t){
     if(!t)return 8;
     switch(t->kind){
@@ -129,6 +138,14 @@ static int count_maxv(IRFunc *f){
 }
 static int assign_allocas(IRFunc *f, int base){
     int cursor=base;
+    if(f->vararg){
+        /* va_list struct (32 bytes on AAPCS64) then GP save area (64 bytes = 8 regs). */
+        cursor += 32;
+        f->va_list_off = cursor;
+        cursor += 32;                  /* reserve space for the va_list */
+        f->vararg_save_off = cursor;   /* save area starts here */
+        cursor += 64;
+    }
     for(uint32_t j=0;j<f->nblocks;j++){
         IRBlock *b=&f->blocks[j];
         for(uint32_t k=0;k<b->ninstrs;k++){
@@ -219,6 +236,16 @@ int arm64_emit(IRModule *m, FILE *o, const TargetDesc *t){
                 const char *r = regalloc_name(&ra, ra.reg_of[pv]);
                 fprintf(o,"  ldr %s, [sp, #%d]\n", r, slotoff(pv));
             }
+        }
+        /* Vararg: dump x0..x7 into the register save area so va_arg can
+           walk them by position. */
+        if(f->vararg){
+            int sb = f->vararg_save_off;
+            add_sp_imm(o, "x9", sb, "x10");
+            fputs("  stp x0, x1, [x9, #0]\n", o);
+            fputs("  stp x2, x3, [x9, #16]\n", o);
+            fputs("  stp x4, x5, [x9, #32]\n", o);
+            fputs("  stp x6, x7, [x9, #48]\n", o);
         }
 
         for(uint32_t j=0;j<f->nblocks;j++){
@@ -362,7 +389,7 @@ int arm64_emit(IRModule *m, FILE *o, const TargetDesc *t){
                 case OP_ALLOCA:
                     if(in->dst>=0){
                         const char *dd = vop_str(in->dst,&ra,db,sizeof db);
-                        fprintf(o,"  add x0, sp, #%u\n", in->pred);
+                        add_sp_imm(o, "x0", (int)in->pred, "x9");
                         store_from(o, dd, "x0");
                     }
                     break;
@@ -495,6 +522,80 @@ int arm64_emit(IRModule *m, FILE *o, const TargetDesc *t){
                 case OP_BR:
                     if(in->label)fprintf(o,"  b .L%s_%s\n",f->name,in->label);
                     break;
+                case OP_VA_START: {
+                    /* Initialize AAPCS64 va_list:
+                       struct { void *__stack; void *__gr_top; void *__vr_top;
+                                int __gr_offs; int __vr_offs; }
+                       __stack   = address of first incoming stack arg
+                                   (above the frame; [sp + framesize + 16])
+                       __gr_top  = save_area + 64 (points past the last slot)
+                       __vr_top  = 0 (unused)
+                       __gr_offs = -8 * nparams (negative; consumes toward 0)
+                       __vr_offs = 0 */
+                    int vl_base = f->va_list_off;
+                    int sb      = f->vararg_save_off;
+                    int gp_off  = 8 * (int)f->nparams - 64;   /* AAPCS64: negative offset from __gr_top */
+                    /* Compute the address of the first caller stack arg. The
+                       caller's stack args start above our saved x29/x30 pair
+                       at [sp + framesize + 16]. We don't have framesize in
+                       scope; recompute from total minus vreg_bytes? Simpler:
+                       use x29 which points at the caller's stack directly
+                       after `mov x29, sp` in the prologue... actually x29 is
+                       our FP pointing at the caller's sp BEFORE our frame. So
+                       [x29 + 16] is the first incoming stack arg. */
+                    add_sp_imm(o, "x9", vl_base, "x11");
+                    fputs("  add x10, x29, #24\n", o);
+                    fputs("  str x10, [x9, #0]\n", o);
+                    add_sp_imm(o, "x10", sb + 64, "x11");
+                    fputs("  str x10, [x9, #8]\n", o);
+                    fputs("  str xzr, [x9, #16]\n", o);
+                    fprintf(o,"  mov w10, #%d\n", gp_off);
+                    fputs("  str w10, [x9, #24]\n", o);
+                    fputs("  str wzr, [x9, #28]\n", o);
+                    if(in->dst>=0){
+                        char db[32];
+                        const char *dd = vop_str(in->dst,&ra,db,sizeof db);
+                        fprintf(o,"  mov %s, x9\n", dd);
+                    }
+                    break;
+                }
+                case OP_VA_ARG: {
+                    char ab[32];
+                    const char *aps = vop_str(in->args[0], &ra, ab, sizeof ab);
+                    int sz=type_size(in->type);
+                    int adv = 8;
+                    unsigned uid = (unsigned)(in - f->blocks[0].instrs);
+                    uid ^= (unsigned)in->dst * 2654435761u;
+                    uid &= 0x7fffffff;
+                    fprintf(o,"  mov x9, %s\n", aps);
+                    fputs("  ldr w10, [x9, #24]\n", o);
+                    fputs("  cmp w10, #0\n", o);
+                    fprintf(o,"  bge .Lva_ovf_%u\n", uid);
+                    fputs("  ldr x11, [x9, #8]\n", o);
+                    fputs("  add x11, x11, w10, sxtw\n", o);
+                    fputs("  add w10, w10, #8\n", o);
+                    fputs("  str w10, [x9, #24]\n", o);
+                    fputs("  ldr x10, [x11]\n", o);
+                    fprintf(o,"  b .Lva_done_%u\n", uid);
+                    fprintf(o,".Lva_ovf_%u:\n", uid);
+                    fputs("  ldr x11, [x9, #0]\n", o);
+                    fputs("  ldr x10, [x11]\n", o);
+                    fputs("  add x11, x11, #8\n", o);
+                    fputs("  str x11, [x9, #0]\n", o);
+                    fprintf(o,".Lva_done_%u:\n", uid);
+                    if(sz==1) fputs("  sxtb x10, w10\n", o);
+                    else if(sz==2) fputs("  sxth x10, w10\n", o);
+                    else if(sz==4) fputs("  sxtw x10, w10\n", o);
+                    if(in->dst>=0){
+                        char db[32];
+                        const char *dd = vop_str(in->dst,&ra,db,sizeof db);
+                        fprintf(o,"  mov %s, x10\n", dd);
+                    }
+                    break;
+                }
+                case OP_VA_END:
+                    break;
+
                 case OP_UNREACHABLE: fputs("  brk #0\n",o); break;
 
                 /* FP ops stay slot-based. */

@@ -28,11 +28,11 @@ const TargetRegInfo x86_64_reginfo = {
 };
 const TargetRegInfo arm64_reginfo = {
     .names = (const char*[]){
-        "x11","x12","x13","x14",
+        "x12","x13","x14",
         "x19","x20","x21","x22","x23"
     },
-    .nregs = 9,
-    .n_caller_saved = 4,
+    .nregs = 8,
+    .n_caller_saved = 3,
 };
 
 const TargetRegInfo riscv_reginfo = {
