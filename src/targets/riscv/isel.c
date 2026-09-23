@@ -145,6 +145,14 @@ static int count_maxv(IRFunc *f){
 }
 static int assign_allocas(IRFunc *f, int base){
     int cursor=base;
+    if(f->vararg){
+        /* va_list (32 bytes) then GP save area (64 bytes = 8 regs). */
+        cursor += 32;
+        f->va_list_off = cursor;
+        cursor += 32;
+        f->vararg_save_off = cursor;
+        cursor += 64;
+    }
     for(uint32_t j=0;j<f->nblocks;j++){
         IRBlock *b=&f->blocks[j];
         for(uint32_t k=0;k<b->ninstrs;k++){
@@ -201,6 +209,22 @@ int riscv_emit(IRModule *m, FILE *o, const TargetDesc *t){
                 sd_sp(o, CS[k], coff);
                 coff += 8;
             }
+        }
+        if(f->vararg){
+            int sb = f->vararg_save_off;
+            if(sb <= 2047)
+                fprintf(o,"  addi t0, sp, %d\n", sb);
+            else {
+                fprintf(o,"  li t0, %d\n  add t0, sp, t0\n", sb);
+            }
+            fputs("  sd a0, 0(t0)\n", o);
+            fputs("  sd a1, 8(t0)\n", o);
+            fputs("  sd a2, 16(t0)\n", o);
+            fputs("  sd a3, 24(t0)\n", o);
+            fputs("  sd a4, 32(t0)\n", o);
+            fputs("  sd a5, 40(t0)\n", o);
+            fputs("  sd a6, 48(t0)\n", o);
+            fputs("  sd a7, 56(t0)\n", o);
         }
 
         static const char *AREG[]={"a0","a1","a2","a3","a4","a5","a6","a7"};
@@ -525,6 +549,84 @@ int riscv_emit(IRModule *m, FILE *o, const TargetDesc *t){
                 case OP_BR:
                     if(in->label)fprintf(o,"  j .L%s_%s\n",f->name,in->label);
                     break;
+                case OP_VA_START: {
+                    /* RV64 va_list: { vr_top(0), gr_top, stack, gr_offs, vr_offs }
+                       gr_top  = sp + sb + 64 (end of save area)
+                       stack   = sp + framesize (first incoming stack arg)
+                       gr_offs = 8*nparams - 64
+                       vr_top, vr_offs = 0 */
+                    int vl_base = f->va_list_off;
+                    int sb      = f->vararg_save_off;
+                    int gp_off  = 8 * (int)f->nparams - 64;
+                    /* t0 = &va_list */
+                    if(vl_base <= 2047)
+                        fprintf(o,"  addi t0, sp, %d\n", vl_base);
+                    else {
+                        fprintf(o,"  li t0, %d\n  add t0, sp, t0\n", vl_base);
+                    }
+                    /* [t0+0] = vr_top = 0 */
+                    fputs("  sd zero, 0(t0)\n", o);
+                    /* [t0+8] = gr_top = sp + (sb + 64) */
+                    int grtop = sb + 64;
+                    if(grtop <= 2047)
+                        fprintf(o,"  addi t1, sp, %d\n", grtop);
+                    else {
+                        fprintf(o,"  li t1, %d\n  add t1, sp, t1\n", grtop);
+                    }
+                    fputs("  sd t1, 8(t0)\n", o);
+                    /* [t0+16] = stack = sp + framesize */
+                    if(framesize <= 2047)
+                        fprintf(o,"  addi t1, sp, %d\n", framesize);
+                    else {
+                        fprintf(o,"  li t1, %d\n  add t1, sp, t1\n", framesize);
+                    }
+                    fputs("  sd t1, 16(t0)\n", o);
+                    /* [t0+24] = gr_offs */
+                    fprintf(o,"  li t1, %d\n", gp_off);
+                    fputs("  sw t1, 24(t0)\n", o);
+                    /* [t0+28] = vr_offs = 0 */
+                    fputs("  sw zero, 28(t0)\n", o);
+                    if(in->dst>=0){
+                        char db[64]; const char *dd = vop_str(in->dst,&ra,db,sizeof db);
+                        fprintf(o,"  mv %s, t0\n", dd);
+                    }
+                    break;
+                }
+                case OP_VA_ARG: {
+                    char ab[64];
+                    const char *aps = vop_str(in->args[0], &ra, ab, sizeof ab);
+                    int sz = type_size(in->type);
+                    unsigned uid = (unsigned)(in - f->blocks[0].instrs);
+                    uid ^= (unsigned)in->dst * 2654435761u;
+                    uid &= 0x7fffffff;
+                    fprintf(o,"  mv t0, %s\n", aps);
+                    fputs("  lw t1, 24(t0)\n", o);
+                    fprintf(o,"  bgez t1, .Lva_ovf_%u\n", uid);
+                    /* register path: t6 = gr_top + gr_offs */
+                    fputs("  ld t6, 8(t0)\n", o);
+                    fputs("  add t6, t6, t1\n", o);
+                    fputs("  addi t1, t1, 8\n", o);
+                    fputs("  sw t1, 24(t0)\n", o);
+                    fputs("  ld t1, 0(t6)\n", o);
+                    fprintf(o,"  j .Lva_done_%u\n", uid);
+                    fprintf(o,".Lva_ovf_%u:\n", uid);
+                    fputs("  ld t6, 16(t0)\n", o);
+                    fputs("  ld t1, 0(t6)\n", o);
+                    fputs("  addi t6, t6, 8\n", o);
+                    fputs("  sd t6, 16(t0)\n", o);
+                    fprintf(o,".Lva_done_%u:\n", uid);
+                    if(sz==1) fputs("  slli t1, t1, 56\n  srai t1, t1, 56\n", o);
+                    else if(sz==2) fputs("  slli t1, t1, 48\n  srai t1, t1, 48\n", o);
+                    else if(sz==4) fputs("  sext.w t1, t1\n", o);
+                    if(in->dst>=0){
+                        char db[64]; const char *dd = vop_str(in->dst,&ra,db,sizeof db);
+                        fprintf(o,"  mv %s, t1\n", dd);
+                    }
+                    break;
+                }
+                case OP_VA_END:
+                    break;
+
                 case OP_UNREACHABLE: fputs("  ebreak\n",o); break;
 
                 /* FP ops stay slot-based. */
