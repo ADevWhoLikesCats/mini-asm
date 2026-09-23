@@ -139,6 +139,13 @@ static int count_maxv(IRFunc *f){
 }
 static int assign_allocas(IRFunc *f, int base){
     int cursor=base;
+    if(f->vararg){
+        /* va_list struct: { cur, reg_end, stack_next } = 12 bytes, round to 16. */
+        cursor += 16;
+        f->va_list_off = cursor;
+        cursor += 16;
+        f->vararg_save_off = cursor;   /* 16-byte register save area (r0-r3) */
+    }
     for(uint32_t j=0;j<f->nblocks;j++){
         IRBlock *b=&f->blocks[j];
         for(uint32_t k=0;k<b->ninstrs;k++){
@@ -183,6 +190,12 @@ int arm_emit(IRModule *m, FILE *o, const TargetDesc *t){
             if(framesize > 0xffff)
                 fprintf(o,"  movt r12, #%u\n", (unsigned)((framesize>>16) & 0xffff));
             fputs("  sub sp, sp, r12\n", o);
+        }
+        if(f->vararg){
+            int sb = f->vararg_save_off;
+            fprintf(o,"  movw r12, #%u\n", (unsigned)sb);
+            fputs("  add r12, sp, r12\n", o);
+            fputs("  stmia r12, {r0, r1, r2, r3}\n", o);
         }
 
         /* Save incoming args to their slots, then optionally to registers.
@@ -491,6 +504,71 @@ int arm_emit(IRModule *m, FILE *o, const TargetDesc *t){
                 case OP_BR:
                     if(in->label)fprintf(o,"  b .L%s_%s\n",f->name,in->label);
                     break;
+                case OP_VA_START: {
+                    /* arm32 va_list: 12 bytes { cur, reg_end, stack_next }.
+                       cur        = reg_save + 4*nparams
+                       reg_end    = reg_save + 16
+                       stack_next = sp + framesize + 36 (first caller-stacked arg)
+                       Write the struct at [sp + va_list_off], return &struct. */
+                    int vl_base = f->va_list_off;
+                    int sb      = f->vararg_save_off;
+                    /* r12 = &va_list */
+                    fprintf(o,"  movw r12, #%u\n  add r12, sp, r12\n", (unsigned)vl_base);
+                    /* r1 = cur = sp + sb + 4*nparams */
+                    int cur_off = sb + 4 * (int)f->nparams;
+                    fprintf(o,"  movw r0, #%u\n  add r0, sp, r0\n", (unsigned)cur_off);
+                    fputs("  str r0, [r12, #0]\n", o);
+                    /* r1 = reg_end = sp + sb + 16 */
+                    int rend_off = sb + 16;
+                    fprintf(o,"  movw r0, #%u\n  add r0, sp, r0\n", (unsigned)rend_off);
+                    fputs("  str r0, [r12, #4]\n", o);
+                    /* r1 = stack_next = sp + framesize + 36 */
+                    int stack_off = framesize + 36;
+                    fprintf(o,"  movw r0, #%u\n", (unsigned)(stack_off & 0xffff));
+                    if(stack_off > 0xffff)
+                        fprintf(o,"  movt r0, #%u\n", (unsigned)((stack_off>>16) & 0xffff));
+                    fputs("  add r0, sp, r0\n", o);
+                    fputs("  str r0, [r12, #8]\n", o);
+                    if(in->dst>=0){
+                        char db[64]; const char *dd = vop_str(in->dst,&ra,db,sizeof db);
+                        fprintf(o,"  mov %s, r12\n", dd);
+                    }
+                    break;
+                }
+                case OP_VA_ARG: {
+                    char ab[64];
+                    const char *aps = vop_str(in->args[0], &ra, ab, sizeof ab);
+                    int sz = type_size(in->type);
+                    unsigned uid = (unsigned)(in - f->blocks[0].instrs);
+                    uid ^= (unsigned)in->dst * 2654435761u;
+                    uid &= 0x7fffffff;
+                    /* r12 = &va_list */
+                    fprintf(o,"  mov r12, %s\n", aps);
+                    fputs("  ldr r0, [r12, #0]\n", o);   /* cur */
+                    fputs("  ldr r1, [r12, #4]\n", o);   /* reg_end */
+                    fputs("  cmp r0, r1\n", o);
+                    fprintf(o,"  bhs .Lva_ovf_%u\n", uid);
+                    /* register path */
+                    fputs("  ldr r2, [r0]\n", o);
+                    fputs("  add r0, r0, #4\n", o);
+                    fputs("  str r0, [r12, #0]\n", o);
+                    fprintf(o,"  b .Lva_done_%u\n", uid);
+                    fprintf(o,".Lva_ovf_%u:\n", uid);
+                    fputs("  ldr r0, [r12, #8]\n", o);   /* stack_next */
+                    fputs("  ldr r2, [r0]\n", o);
+                    fputs("  add r0, r0, #4\n", o);
+                    fputs("  str r0, [r12, #8]\n", o);
+                    fprintf(o,".Lva_done_%u:\n", uid);
+                    /* widen to 32-bit (already 32-bit in r2) */
+                    if(in->dst>=0){
+                        char db[64]; const char *dd = vop_str(in->dst,&ra,db,sizeof db);
+                        fprintf(o,"  mov %s, r2\n", dd);
+                    }
+                    break;
+                }
+                case OP_VA_END:
+                    break;
+
                 case OP_UNREACHABLE: fputs("  udf #0\n",o); break;
 
                 /* FP via VFP (d0, d1 scratch, slot-based). */
