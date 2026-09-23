@@ -72,4 +72,9 @@ IRFunc   *ir_func_new(IRModule*, const char*, IRType*);
 IRBlock  *ir_block_new(IRFunc*, const char*);
 int       ir_emit(IRBlock*, IROpcode, IRType*, int a0, int a1, int a2, int a3, int n);
 int       ir_add_string(IRModule*, const char *bytes, uint32_t len);
+/* Global FP immediate table (shared by parser, builder, and backends). */
+int    ir_fpimm_add(double d);
+double ir_fpimm_get(int idx);
+int    ir_fpimm_count(void);
+
 #endif

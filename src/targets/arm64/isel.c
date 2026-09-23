@@ -6,7 +6,7 @@
 #include <stdlib.h>
 
 #define PARAM_BASE 1000
-extern double ir_fpimm[];
+
 
 #define SCRATCH1 "x9"
 #define SCRATCH2 "x10"
@@ -500,14 +500,14 @@ int arm64_emit(IRModule *m, FILE *o, const TargetDesc *t){
                 /* FP ops stay slot-based. */
                 case OP_FADD: case OP_FSUB: case OP_FMUL: case OP_FDIV: {
                     if(in->kinds[0]==ARG_FP){
-                        uint64_t bits; double d=ir_fpimm[in->args[0]];
+                        uint64_t bits; double d=ir_fpimm_get(in->args[0]);
                         memcpy(&bits,&d,8);
                         fprintf(o,"  movz x9, #%u\n  movk x9, #%u, lsl #16\n  movk x9, #%u, lsl #32\n  movk x9, #%u, lsl #48\n  fmov d0, x9\n",
                             (unsigned)(bits&0xffff),(unsigned)((bits>>16)&0xffff),
                             (unsigned)((bits>>32)&0xffff),(unsigned)((bits>>48)&0xffff));
                     } else fprintf(o,"  ldr d0, [sp, #%d]\n",slotoff(in->args[0]));
                     if(in->kinds[1]==ARG_FP){
-                        uint64_t bits; double d=ir_fpimm[in->args[1]];
+                        uint64_t bits; double d=ir_fpimm_get(in->args[1]);
                         memcpy(&bits,&d,8);
                         fprintf(o,"  movz x9, #%u\n  movk x9, #%u, lsl #16\n  movk x9, #%u, lsl #32\n  movk x9, #%u, lsl #48\n  fmov d1, x9\n",
                             (unsigned)(bits&0xffff),(unsigned)((bits>>16)&0xffff),
@@ -524,7 +524,7 @@ int arm64_emit(IRModule *m, FILE *o, const TargetDesc *t){
                 }
                 case OP_FNEG: {
                     if(in->kinds[0]==ARG_FP){
-                        uint64_t bits; double d=ir_fpimm[in->args[0]];
+                        uint64_t bits; double d=ir_fpimm_get(in->args[0]);
                         memcpy(&bits,&d,8);
                         fprintf(o,"  movz x9, #%u\n  movk x9, #%u, lsl #16\n  movk x9, #%u, lsl #32\n  movk x9, #%u, lsl #48\n  fmov d0, x9\n",
                             (unsigned)(bits&0xffff),(unsigned)((bits>>16)&0xffff),
@@ -536,14 +536,14 @@ int arm64_emit(IRModule *m, FILE *o, const TargetDesc *t){
                 }
                 case OP_FCMP: {
                     if(in->kinds[0]==ARG_FP){
-                        uint64_t bits; double d=ir_fpimm[in->args[0]];
+                        uint64_t bits; double d=ir_fpimm_get(in->args[0]);
                         memcpy(&bits,&d,8);
                         fprintf(o,"  movz x9, #%u\n  movk x9, #%u, lsl #16\n  movk x9, #%u, lsl #32\n  movk x9, #%u, lsl #48\n  fmov d0, x9\n",
                             (unsigned)(bits&0xffff),(unsigned)((bits>>16)&0xffff),
                             (unsigned)((bits>>32)&0xffff),(unsigned)((bits>>48)&0xffff));
                     } else fprintf(o,"  ldr d0, [sp, #%d]\n",slotoff(in->args[0]));
                     if(in->kinds[1]==ARG_FP){
-                        uint64_t bits; double d=ir_fpimm[in->args[1]];
+                        uint64_t bits; double d=ir_fpimm_get(in->args[1]);
                         memcpy(&bits,&d,8);
                         fprintf(o,"  movz x9, #%u\n  movk x9, #%u, lsl #16\n  movk x9, #%u, lsl #32\n  movk x9, #%u, lsl #48\n  fmov d1, x9\n",
                             (unsigned)(bits&0xffff),(unsigned)((bits>>16)&0xffff),
@@ -567,7 +567,7 @@ int arm64_emit(IRModule *m, FILE *o, const TargetDesc *t){
                     int src_is_fp = (in->pred==TY_F32 || in->pred==TY_F64);
                     if(src_is_fp){
                         if(in->kinds[0]==ARG_FP){
-                            uint64_t bits; double d=ir_fpimm[in->args[0]];
+                            uint64_t bits; double d=ir_fpimm_get(in->args[0]);
                             memcpy(&bits,&d,8);
                             fprintf(o,"  movz x9, #%u\n  movk x9, #%u, lsl #16\n  movk x9, #%u, lsl #32\n  movk x9, #%u, lsl #48\n  fmov d0, x9\n",
                                 (unsigned)(bits&0xffff),(unsigned)((bits>>16)&0xffff),

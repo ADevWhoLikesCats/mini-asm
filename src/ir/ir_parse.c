@@ -143,10 +143,7 @@ static void layout_struct(IRType *t){
 }
 
 /* Side table for FP immediates: index stored in args[], bits in fpimm[] */
-#define FP_IMM_MAX 256
-extern double ir_fpimm[FP_IMM_MAX];
-static int fpimm_count=0;
-double ir_fpimm[FP_IMM_MAX];
+
 
 /* --- Named vreg symbol table --- */
 #define SYM_MAX 1024
@@ -215,9 +212,7 @@ static int parse_operand(FILE *f, IRInstr *in, int slot){
         return 1;
     }
     if(strchr(b,'.')){
-        int idx=fpimm_count++;
-        if(idx>=FP_IMM_MAX)idx=FP_IMM_MAX-1;
-        ir_fpimm[idx]=strtod(b,NULL);
+        int idx = ir_fpimm_add(strtod(b,NULL));
         in->kinds[slot]=ARG_FP;
         in->args[slot]=idx;
         return 1;

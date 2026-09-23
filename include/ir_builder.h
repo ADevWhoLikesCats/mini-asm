@@ -27,6 +27,17 @@ IRType *ir_type_named(const char *name);
 IRValue *ir_const_i(IRType *t, int64_t v);
 IRValue *ir_const_f(IRType *t, double d);
 
+/* --- Placeholders (for phi cycles and forward references) --- */
+/* Create a placeholder. Use it in instructions now; define it later with
+   ir_value_define(). At finalize time, every use of the placeholder is
+   rewritten to the real value. */
+IRValue *ir_value_placeholder(IRBuilder *b, IRType *t);
+void     ir_value_define(IRBuilder *b, IRValue *placeholder, IRValue *actual);
+
+/* Finalize the current function: resolve placeholders and apply aliases.
+   Safe to call multiple times; idempotent. */
+void     ir_builder_finalize(IRBuilder *b);
+
 /* --- Builder lifecycle --- */
 IRBuilder *ir_builder_new(IRModule *m);
 void       ir_builder_free(IRBuilder *b);

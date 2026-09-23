@@ -17,17 +17,15 @@ struct IRBuilder {
     IRFunc   *cur_func;
     IRBlock  *cur_block;
     int       next_vreg;
+    /* Placeholder resolution: alias[v] maps placeholder vreg v to a real vreg
+       or constant. -1 in alias_vreg means "constant in alias_const". */
+    int      *alias_vreg;
+    int64_t  *alias_const;
+    char     *alias_known;
+    char     *alias_is_fp;   /* 1 if alias_const holds FP bits (as int64) */
+    int       alias_cap;
 };
 
-/* --- FP immediate table (per-process; fine for our single-module case) --- */
-static double g_fptab[1024];
-static int    g_fpn = 0;
-static int    fp_add(double d){
-    int i = g_fpn++;
-    if(i >= 1024) i = 1023;
-    g_fptab[i] = d;
-    return i;
-}
 
 /* --- Type singletons --- */
 static IRType *mk(IRTypeKind k){ IRType *t = calloc(1,sizeof *t); t->kind = k; return t; }
@@ -127,9 +125,22 @@ IRValue *ir_const_f(IRType *t, double d){
 IRBuilder *ir_builder_new(IRModule *m){
     IRBuilder *b = calloc(1,sizeof *b);
     b->m = m; b->next_vreg = 0;
+    b->alias_cap = 1024;
+    b->alias_vreg  = malloc(b->alias_cap * sizeof(int));
+    b->alias_const = malloc(b->alias_cap * sizeof(int64_t));
+    b->alias_known = calloc(b->alias_cap, 1);
+    b->alias_is_fp = calloc(b->alias_cap, 1);
+    for(int i=0;i<b->alias_cap;i++) b->alias_vreg[i] = -1;
     return b;
 }
-void ir_builder_free(IRBuilder *b){ free(b); }
+void ir_builder_free(IRBuilder *b){
+    if(!b) return;
+    free(b->alias_vreg);
+    free(b->alias_const);
+    free(b->alias_known);
+    free(b->alias_is_fp);
+    free(b);
+}
 
 IRValue *ir_arg(IRBuilder *b, int i){
     (void)b;
@@ -141,6 +152,8 @@ IRValue *ir_arg(IRBuilder *b, int i){
 IRFunc *ir_builder_func(IRBuilder *b, const char *name, IRType *ret){
     b->cur_func = ir_func_new(b->m, name, ret);
     b->next_vreg = 0;
+    /* Reset aliases for the new function */
+    for(int i=0;i<b->alias_cap;i++){ b->alias_known[i]=0; b->alias_is_fp[i]=0; b->alias_vreg[i]=-1; }
     return b->cur_func;
 }
 void ir_builder_params(IRBuilder *b, IRFunc *f, IRType **types, int n){
@@ -154,6 +167,104 @@ IRBlock *ir_current_block(IRBuilder *b){ return b->cur_block; }
 IRFunc  *ir_current_func (IRBuilder *b){ return b->cur_func; }
 
 /* --- Internal helpers --- */
+static void alias_grow(IRBuilder *b, int v){
+    if(v < b->alias_cap) return;
+    int newcap = b->alias_cap;
+    while(newcap <= v) newcap *= 2;
+    b->alias_vreg  = realloc(b->alias_vreg,  newcap * sizeof(int));
+    b->alias_const = realloc(b->alias_const, newcap * sizeof(int64_t));
+    b->alias_known = realloc(b->alias_known, newcap);
+    b->alias_is_fp = realloc(b->alias_is_fp, newcap);
+    for(int i=b->alias_cap;i<newcap;i++){
+        b->alias_vreg[i] = -1;
+        b->alias_known[i] = 0;
+        b->alias_is_fp[i] = 0;
+    }
+    b->alias_cap = newcap;
+}
+
+/* --- Placeholder API --- */
+IRValue *ir_value_placeholder(IRBuilder *b, IRType *t){
+    IRValue *v = calloc(1,sizeof *v);
+    v->is_const = 0;
+    v->vreg = b->next_vreg++;
+    v->type = t;
+    alias_grow(b, v->vreg);
+    return v;
+}
+
+void ir_value_define(IRBuilder *b, IRValue *ph, IRValue *actual){
+    if(!ph || !actual) return;
+    int v = ph->vreg;
+    alias_grow(b, v);
+    b->alias_known[v] = 1;
+    if(actual->is_const == 0){
+        b->alias_vreg[v]  = actual->vreg;
+        b->alias_is_fp[v] = 0;
+    } else if(actual->is_const == 1){
+        b->alias_vreg[v]  = -1;
+        b->alias_const[v] = actual->i;
+        b->alias_is_fp[v] = 0;
+    } else if(actual->is_const == 2){
+        uint64_t bits; memcpy(&bits, &actual->f, 8);
+        b->alias_vreg[v]  = -1;
+        b->alias_const[v] = (int64_t)bits;
+        b->alias_is_fp[v] = 1;
+    }
+}
+
+/* Resolve one vreg through the alias chain. Follows up to 32 hops.
+   Sets *out_const and *out_kind on success. */
+static int resolve_vreg(IRBuilder *b, int v, int *out_v, int64_t *out_c, int *out_kind){
+    int hops = 0;
+    while(v >= 0 && v < b->alias_cap && b->alias_known[v] && hops < 32){
+        if(b->alias_vreg[v] >= 0){
+            v = b->alias_vreg[v];
+            hops++;
+        } else {
+            *out_kind = b->alias_is_fp[v] ? ARG_FP : ARG_IMM;
+            *out_c = b->alias_const[v];
+            return 2; /* resolved to constant */
+        }
+    }
+    *out_v = v;
+    return 1; /* resolved to vreg */
+}
+
+void ir_builder_finalize(IRBuilder *b){
+    if(!b->cur_func) return;
+    IRFunc *f = b->cur_func;
+    for(uint32_t j=0;j<f->nblocks;j++){
+        IRBlock *blk = &f->blocks[j];
+        for(uint32_t k=0;k<blk->ninstrs;k++){
+            IRInstr *in = &blk->instrs[k];
+            for(uint32_t a=0;a<in->nargs && a<16;a++){
+                if(in->kinds[a] != ARG_VREG) continue;
+                int out_v = -1; int64_t out_c = 0; int out_kind = 0;
+                int r = resolve_vreg(b, in->args[a], &out_v, &out_c, &out_kind);
+                if(r == 2){
+                    in->kinds[a] = out_kind;
+                    if(out_kind == ARG_FP){
+                        /* FP immediate table lives in the builder scope; use a
+                           shared global fp table for consistency. */
+                        extern int ir_fpimm_add(double d);
+                        uint64_t bits = (uint64_t)out_c;
+                        double d; memcpy(&d, &bits, 8);
+                        in->args[a] = ir_fpimm_add(d);
+                    } else {
+                        in->args[a] = (int)out_c;
+                    }
+                } else {
+                    in->args[a] = out_v;
+                }
+            }
+        }
+    }
+    /* Also resolve phi args — phi uses the same ARG_VREG/args representation,
+       so the loop above already covers it. */
+}
+
+/* --- Internal helpers --- */
 static IRValue *new_vreg_val(IRBuilder *b){
     IRValue *v = calloc(1,sizeof *v);
     v->is_const = 0;
@@ -164,7 +275,7 @@ static void set_arg(IRInstr *e, int i, IRValue *v){
     if(!v){ e->kinds[i] = ARG_NONE; return; }
     if(v->is_const == 0){ e->kinds[i] = ARG_VREG; e->args[i] = v->vreg; }
     else if(v->is_const == 1){ e->kinds[i] = ARG_IMM; e->args[i] = (int)v->i; }
-    else if(v->is_const == 2){ e->kinds[i] = ARG_FP;  e->args[i] = fp_add(v->f); }
+    else if(v->is_const == 2){ e->kinds[i] = ARG_FP;  e->args[i] = ir_fpimm_add(v->f); }
 }
 static IRValue *emit1(IRBuilder *b, IROpcode op, IRType *t, IRValue *a){
     int ix = ir_emit(b->cur_block, op, t, 0, 0, 0, 0, 1);

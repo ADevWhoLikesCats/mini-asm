@@ -6,7 +6,7 @@
 #include <stdlib.h>
 
 #define PARAM_BASE 1000
-extern double ir_fpimm[];
+
 
 /* Scratch registers reserved for codegen. Never allocated to vregs. */
 #define SCRATCH1 "%r10"
@@ -345,7 +345,7 @@ int x86_64_emit(IRModule *m, FILE *o, const TargetDesc *t){
                     int src_is_fp = (in->pred==TY_F32 || in->pred==TY_F64);
                     if(src_is_fp){
                         if(in->kinds[0]==ARG_FP){
-                            uint64_t bits; double d=ir_fpimm[in->args[0]];
+                            uint64_t bits; double d=ir_fpimm_get(in->args[0]);
                             memcpy(&bits,&d,8);
                             fprintf(o,"  movabsq $%llu, %%rax\n  movq %%rax, %%xmm0\n",(unsigned long long)bits);
                         } else {
@@ -381,12 +381,12 @@ int x86_64_emit(IRModule *m, FILE *o, const TargetDesc *t){
                 case OP_FADD: case OP_FSUB: case OP_FMUL: case OP_FDIV: {
                     /* FP vregs stay in slots for now. */
                     if(in->kinds[0]==ARG_FP){
-                        uint64_t bits; double d=ir_fpimm[in->args[0]];
+                        uint64_t bits; double d=ir_fpimm_get(in->args[0]);
                         memcpy(&bits,&d,8);
                         fprintf(o,"  movabsq $%llu, %%rax\n  movq %%rax, %%xmm0\n",(unsigned long long)bits);
                     } else fprintf(o,"  movq %d(%%rbp), %%xmm0\n",vreg_off(in->args[0]));
                     if(in->kinds[1]==ARG_FP){
-                        uint64_t bits; double d=ir_fpimm[in->args[1]];
+                        uint64_t bits; double d=ir_fpimm_get(in->args[1]);
                         memcpy(&bits,&d,8);
                         fprintf(o,"  movabsq $%llu, %%rax\n  movq %%rax, %%xmm1\n",(unsigned long long)bits);
                     } else fprintf(o,"  movq %d(%%rbp), %%xmm1\n",vreg_off(in->args[1]));
@@ -401,7 +401,7 @@ int x86_64_emit(IRModule *m, FILE *o, const TargetDesc *t){
                 }
                 case OP_FNEG: {
                     if(in->kinds[0]==ARG_FP){
-                        uint64_t bits; double d=ir_fpimm[in->args[0]];
+                        uint64_t bits; double d=ir_fpimm_get(in->args[0]);
                         memcpy(&bits,&d,8);
                         fprintf(o,"  movabsq $%llu, %%rax\n  movq %%rax, %%xmm0\n",(unsigned long long)bits);
                     } else fprintf(o,"  movq %d(%%rbp), %%xmm0\n",vreg_off(in->args[0]));
@@ -411,12 +411,12 @@ int x86_64_emit(IRModule *m, FILE *o, const TargetDesc *t){
                 }
                 case OP_FCMP: {
                     if(in->kinds[0]==ARG_FP){
-                        uint64_t bits; double d=ir_fpimm[in->args[0]];
+                        uint64_t bits; double d=ir_fpimm_get(in->args[0]);
                         memcpy(&bits,&d,8);
                         fprintf(o,"  movabsq $%llu, %%rax\n  movq %%rax, %%xmm0\n",(unsigned long long)bits);
                     } else fprintf(o,"  movq %d(%%rbp), %%xmm0\n",vreg_off(in->args[0]));
                     if(in->kinds[1]==ARG_FP){
-                        uint64_t bits; double d=ir_fpimm[in->args[1]];
+                        uint64_t bits; double d=ir_fpimm_get(in->args[1]);
                         memcpy(&bits,&d,8);
                         fprintf(o,"  movabsq $%llu, %%rax\n  movq %%rax, %%xmm1\n",(unsigned long long)bits);
                     } else fprintf(o,"  movq %d(%%rbp), %%xmm1\n",vreg_off(in->args[1]));
