@@ -1,0 +1,6 @@
+# EXPECT 1
+func main i32 {
+block entry
+  %0 = icmp i32 eq 7 7
+  ret i32 %0
+}
