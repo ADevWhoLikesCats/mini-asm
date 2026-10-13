@@ -53,7 +53,7 @@ typedef struct IRFunc{
     IRType *ret;
     IRType **params;
     uint32_t nparams;
-    IRBlock *blocks;
+    IRBlock **blocks;
     uint32_t nblocks, cap;
     int nvregs;
     int nlocals;
