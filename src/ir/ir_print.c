@@ -6,7 +6,7 @@ void ir_print(IRModule *m, FILE *o){
         IRFunc *f=&m->funcs[i];
         fprintf(o,"; func %s blocks=%u\n",f->name,f->nblocks);
         for(uint32_t j=0;j<f->nblocks;j++){
-            IRBlock *b=&f->blocks[j];
+            IRBlock *b=f->blocks[j];
             fprintf(o,";   block %s instrs=%u\n",b->name,b->ninstrs);
             for(uint32_t k=0;k<b->ninstrs;k++){
                 IRInstr *in=&b->instrs[k];

@@ -235,7 +235,7 @@ void ir_builder_finalize(IRBuilder *b){
     if(!b->cur_func) return;
     IRFunc *f = b->cur_func;
     for(uint32_t j=0;j<f->nblocks;j++){
-        IRBlock *blk = &f->blocks[j];
+        IRBlock *blk = f->blocks[j];
         for(uint32_t k=0;k<blk->ninstrs;k++){
             IRInstr *in = &blk->instrs[k];
             for(uint32_t a=0;a<in->nargs && a<16;a++){

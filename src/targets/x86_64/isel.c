@@ -91,7 +91,7 @@ static void canon(FILE *o, IRType *t){
 /* Phi copies now regalloc-aware. */
 static int phi_copies_needed(IRFunc *f, const char *pred, const char *succ){
     for(uint32_t j=0;j<f->nblocks;j++){
-        IRBlock *b=&f->blocks[j];
+        IRBlock *b=f->blocks[j];
         if(strcmp(b->name,succ))continue;
         for(uint32_t k=0;k<b->ninstrs;k++){
             IRInstr *in=&b->instrs[k];
@@ -108,7 +108,7 @@ static void emit_phi_copies_for_edge(FILE *o, IRFunc *f, const char *pred, const
     if(getenv("CC_DEBUG_PHI"))
         fprintf(o, "# phi-copies %s -> %s\n", pred, succ);
     for(uint32_t j=0;j<f->nblocks;j++){
-        IRBlock *b=&f->blocks[j];
+        IRBlock *b=f->blocks[j];
         if(strcmp(b->name,succ))continue;
         for(uint32_t k=0;k<b->ninstrs;k++){
             IRInstr *in=&b->instrs[k];
@@ -132,7 +132,7 @@ static void emit_phi_copies_for_edge(FILE *o, IRFunc *f, const char *pred, const
 static int count_maxv(IRFunc *f){
     int maxv=0;
     for(uint32_t j=0;j<f->nblocks;j++){
-        IRBlock *b=&f->blocks[j];
+        IRBlock *b=f->blocks[j];
         for(uint32_t k=0;k<b->ninstrs;k++){
             IRInstr *in=&b->instrs[k];
             if(in->dst>maxv)maxv=in->dst;
@@ -160,7 +160,7 @@ static int assign_allocas(IRFunc *f, int base){
         f->vararg_save_off = cursor;
     }
     for(uint32_t j=0;j<f->nblocks;j++){
-        IRBlock *b=&f->blocks[j];
+        IRBlock *b=f->blocks[j];
         for(uint32_t k=0;k<b->ninstrs;k++){
             IRInstr *in=&b->instrs[k];
             if(in->op!=OP_ALLOCA)continue;
@@ -234,7 +234,7 @@ int x86_64_emit(IRModule *m, FILE *o, const TargetDesc *t){
         }
 
         for(uint32_t j=0;j<f->nblocks;j++){
-            IRBlock *b=&f->blocks[j];
+            IRBlock *b=f->blocks[j];
             fprintf(o,".L%s_%s:\n",f->name,b->name);
             for(uint32_t k=0;k<b->ninstrs;k++){
                 IRInstr *in=&b->instrs[k];
@@ -605,7 +605,7 @@ int x86_64_emit(IRModule *m, FILE *o, const TargetDesc *t){
                     const char *aps = vop_str(in->args[0], &ra, ab);
                     int sz=type_size(in->type);
                     int adv = 8;
-                    unsigned uid = (unsigned)(in - f->blocks[0].instrs);
+                    unsigned uid = (unsigned)(in - f->blocks[0]->instrs);
                     uid ^= (unsigned)in->dst * 2654435761u;
                     uid &= 0x7fffffff;   /* keep it positive for label name */
                     fprintf(o,"  movq %s, %%rax\n", aps);

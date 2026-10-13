@@ -167,7 +167,7 @@ static IvList compute_intervals(IRFunc *f, int *out_nvregs){
 
     /* Pass 1: assign positions and record uses/defs. */
     for(uint32_t bi=0; bi<f->nblocks; bi++){
-        IRBlock *b = &f->blocks[bi];
+        IRBlock *b = f->blocks[bi];
         block_start[bi] = pos;
         for(uint32_t ii=0; ii<b->ninstrs; ii++){
             IRInstr *in = &b->instrs[ii];
@@ -203,7 +203,7 @@ static IvList compute_intervals(IRFunc *f, int *out_nvregs){
 
     /* Pass 2: phi arg uses at ends of predecessor blocks. */
     for(uint32_t bi=0; bi<f->nblocks; bi++){
-        IRBlock *b = &f->blocks[bi];
+        IRBlock *b = f->blocks[bi];
         for(uint32_t ii=0; ii<b->ninstrs; ii++){
             IRInstr *in = &b->instrs[ii];
             if(in->op != OP_PHI) continue;
@@ -211,7 +211,7 @@ static IvList compute_intervals(IRFunc *f, int *out_nvregs){
             for(int s=0; s<2; s++){
                 if(!pred_names[s] || in->kinds[s] != ARG_VREG) continue;
                 for(uint32_t pj=0; pj<f->nblocks; pj++){
-                    if(!strcmp(f->blocks[pj].name, pred_names[s])){
+                    if(!strcmp(f->blocks[pj]->name, pred_names[s])){
                         /* Use lives at the end of that pred block. */
                         int end_pos = block_end[pj] > 0 ? block_end[pj] : 0;
                         touch_use(&L, in->args[s], end_pos);
@@ -244,7 +244,7 @@ static IvList compute_intervals(IRFunc *f, int *out_nvregs){
     {
         int p3 = 0;
         for(uint32_t bi=0; bi<f->nblocks; bi++){
-            IRBlock *bb = &f->blocks[bi];
+            IRBlock *bb = f->blocks[bi];
             for(uint32_t ii=0; ii<bb->ninstrs; ii++){
                 IRInstr *in = &bb->instrs[ii];
                 p3++;
@@ -262,7 +262,7 @@ static IvList compute_intervals(IRFunc *f, int *out_nvregs){
        anywhere inside a loop must remain live until the end of the loop,
        because the last use is cyclically re-live on each iteration. */
     for(uint32_t bi=0; bi<f->nblocks; bi++){
-        IRBlock *b = &f->blocks[bi];
+        IRBlock *b = f->blocks[bi];
         for(uint32_t ii=0; ii<b->ninstrs; ii++){
             IRInstr *in = &b->instrs[ii];
             const char *succs[2] = {NULL,NULL};
@@ -271,7 +271,7 @@ static IvList compute_intervals(IRFunc *f, int *out_nvregs){
             for(int s=0;s<2;s++){
                 if(!succs[s]) continue;
                 for(uint32_t sj=0; sj<f->nblocks; sj++){
-                    if(strcmp(f->blocks[sj].name, succs[s])) continue;
+                    if(strcmp(f->blocks[sj]->name, succs[s])) continue;
                     if(block_start[sj] <= block_start[bi]){
                         int lo = block_start[sj], hi = block_end[bi];
                         for(int k=0;k<L.n;k++){

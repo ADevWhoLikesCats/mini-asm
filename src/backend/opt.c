@@ -14,7 +14,7 @@ int ir_opt_level = 1;
 static int func_maxv(IRFunc *f){
     int maxv = 0;
     for(uint32_t j=0;j<f->nblocks;j++){
-        IRBlock *b = &f->blocks[j];
+        IRBlock *b = f->blocks[j];
         for(uint32_t k=0;k<b->ninstrs;k++){
             IRInstr *in = &b->instrs[k];
             if(in->dst > maxv) maxv = in->dst;
@@ -145,7 +145,7 @@ void ir_constfold_func(IRFunc *f){
     while(changed && passes < 16){
         changed = 0; passes++;
         for(uint32_t j=0;j<f->nblocks;j++){
-            IRBlock *b = &f->blocks[j];
+            IRBlock *b = f->blocks[j];
             for(uint32_t k=0;k<b->ninstrs;k++){
                 IRInstr *in = &b->instrs[k];
 
@@ -183,7 +183,7 @@ void ir_constfold_func(IRFunc *f){
 
 static void mark_uses(IRFunc *f, char *used, int n){
     for(uint32_t j=0;j<f->nblocks;j++){
-        IRBlock *b = &f->blocks[j];
+        IRBlock *b = f->blocks[j];
         for(uint32_t k=0;k<b->ninstrs;k++){
             IRInstr *in = &b->instrs[k];
             for(uint32_t a=0;a<in->nargs && a<16;a++){
@@ -205,7 +205,7 @@ void ir_dce_func(IRFunc *f){
         mark_uses(f, used, maxv + 1);
 
         for(uint32_t j=0;j<f->nblocks;j++){
-            IRBlock *b = &f->blocks[j];
+            IRBlock *b = f->blocks[j];
             uint32_t out = 0;
             for(uint32_t k=0;k<b->ninstrs;k++){
                 IRInstr *in = &b->instrs[k];
@@ -231,7 +231,7 @@ void ir_dce_func(IRFunc *f){
 
 static void algebraic_simplify(IRFunc *f, int *alias, int nalias){
     for(uint32_t j=0;j<f->nblocks;j++){
-        IRBlock *b = &f->blocks[j];
+        IRBlock *b = f->blocks[j];
         for(uint32_t k=0;k<b->ninstrs;k++){
             IRInstr *in = &b->instrs[k];
             if(in->dst < 0 || in->dst >= nalias) continue;
@@ -292,7 +292,7 @@ static int is_pow2_u64(uint64_t v, int *log2_out){
 
 static void strength_reduce(IRFunc *f){
     for(uint32_t j=0;j<f->nblocks;j++){
-        IRBlock *b = &f->blocks[j];
+        IRBlock *b = f->blocks[j];
         for(uint32_t k=0;k<b->ninstrs;k++){
             IRInstr *in = &b->instrs[k];
             if(in->dst < 0) continue;
@@ -348,7 +348,7 @@ static void strength_reduce(IRFunc *f){
 
 static void phi_simplify(IRFunc *f, int *alias, int nalias){
     for(uint32_t j=0;j<f->nblocks;j++){
-        IRBlock *b = &f->blocks[j];
+        IRBlock *b = f->blocks[j];
         for(uint32_t k=0;k<b->ninstrs;k++){
             IRInstr *in = &b->instrs[k];
             if(in->op != OP_PHI) continue;
@@ -394,7 +394,7 @@ static int icmp_self_value(uint32_t pred, int *val){
 
 static void fold_self_icmp(IRFunc *f, int *alias, int nalias){
     for(uint32_t j=0;j<f->nblocks;j++){
-        IRBlock *b = &f->blocks[j];
+        IRBlock *b = f->blocks[j];
         for(uint32_t k=0;k<b->ninstrs;k++){
             IRInstr *in = &b->instrs[k];
             if(in->op != OP_ICMP) continue;
@@ -423,7 +423,7 @@ static void fold_self_icmp(IRFunc *f, int *alias, int nalias){
 
 static void copy_propagate_func(IRFunc *f, int *alias, int nalias){
     for(uint32_t j=0;j<f->nblocks;j++){
-        IRBlock *b = &f->blocks[j];
+        IRBlock *b = f->blocks[j];
         for(uint32_t k=0;k<b->ninstrs;k++){
             IRInstr *in = &b->instrs[k];
             for(uint32_t a=0;a<in->nargs && a<16;a++){
@@ -450,7 +450,7 @@ static void copy_propagate_func(IRFunc *f, int *alias, int nalias){
 
 static void common_subexpr_elim(IRFunc *f, int *alias, int nalias){
     for(uint32_t j=0;j<f->nblocks;j++){
-        IRBlock *b = &f->blocks[j];
+        IRBlock *b = f->blocks[j];
         for(uint32_t k=0;k<b->ninstrs;k++){
             IRInstr *in = &b->instrs[k];
             if(in->dst < 0 || in->dst >= nalias) continue;
@@ -484,7 +484,7 @@ static void common_subexpr_elim(IRFunc *f, int *alias, int nalias){
 
 static void dead_block_elim(IRFunc *f){
     for(uint32_t j=0;j<f->nblocks;j++){
-        IRBlock *b = &f->blocks[j];
+        IRBlock *b = f->blocks[j];
         for(uint32_t k=0;k<b->ninstrs;k++){
             IRInstr *in = &b->instrs[k];
             if(in->op != OP_CBR) continue;
@@ -506,7 +506,7 @@ static void dead_block_elim(IRFunc *f){
     reachable[0] = 1;
     while(sp > 0){
         uint32_t idx = stack[--sp];
-        IRBlock *b = &f->blocks[idx];
+        IRBlock *b = f->blocks[idx];
         for(uint32_t k=0;k<b->ninstrs;k++){
             IRInstr *in = &b->instrs[k];
             const char *succs[2] = {NULL,NULL};
@@ -515,7 +515,7 @@ static void dead_block_elim(IRFunc *f){
             for(int s=0;s<2;s++){
                 if(!succs[s]) continue;
                 for(uint32_t t=0;t<n;t++){
-                    if(!strcmp(f->blocks[t].name, succs[s]) && !reachable[t]){
+                    if(!strcmp(f->blocks[t]->name, succs[s]) && !reachable[t]){
                         reachable[t] = 1;
                         stack[sp++] = t;
                     }
@@ -544,7 +544,7 @@ static void dead_block_elim(IRFunc *f){
 
 static void local_load_elim(IRFunc *f, int *alias, int nalias){
     for(uint32_t j=0;j<f->nblocks;j++){
-        IRBlock *b = &f->blocks[j];
+        IRBlock *b = f->blocks[j];
         /* Track: for each pointer vreg currently in memory, the value vreg
            most recently stored. Reset on call/store to a different pointer. */
         for(uint32_t k=0;k<b->ninstrs;k++){
@@ -599,7 +599,7 @@ static void local_load_elim(IRFunc *f, int *alias, int nalias){
 
 static void collaps_ext_chains(IRFunc *f, int *alias, int nalias){
     for(uint32_t j=0;j<f->nblocks;j++){
-        IRBlock *b = &f->blocks[j];
+        IRBlock *b = f->blocks[j];
         for(uint32_t k=0;k<b->ninstrs;k++){
             IRInstr *in = &b->instrs[k];
             if(in->dst < 0 || in->dst >= nalias) continue;
@@ -610,7 +610,7 @@ static void collaps_ext_chains(IRFunc *f, int *alias, int nalias){
             /* Find the defining instruction for src (anywhere) */
             IRInstr *def = NULL;
             for(uint32_t jj=0;jj<f->nblocks && !def;jj++){
-                IRBlock *bb = &f->blocks[jj];
+                IRBlock *bb = f->blocks[jj];
                 for(uint32_t kk=0;kk<bb->ninstrs;kk++){
                     if(bb->instrs[kk].dst == src && has_side_effect(bb->instrs[kk].op) == 0){
                         def = &bb->instrs[kk];
