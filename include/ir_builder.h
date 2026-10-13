@@ -1,5 +1,9 @@
 #ifndef IR_BUILDER_H
 #define IR_BUILDER_H
+
+#ifdef __cplusplus
+extern "C" {
+#endif
 #include "ir.h"
 #include <stdint.h>
 
@@ -125,4 +129,8 @@ void     ir_unreachable(IRBuilder *b);
 IRValue *ir_call  (IRBuilder *b, IRType *ret, const char *callee, IRValue **args, int nargs);
 IRValue *ir_call_n(IRBuilder *b, IRType *ret, const char *callee, IRValue **args, int nargs);
 
+
+#ifdef __cplusplus
+}
+#endif
 #endif

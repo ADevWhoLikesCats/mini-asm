@@ -1,5 +1,9 @@
 #ifndef BACKEND_H
 #define BACKEND_H
+
+#ifdef __cplusplus
+extern "C" {
+#endif
 #include <stdio.h>
 #include "ir.h"
 typedef struct TargetDesc TargetDesc;
@@ -41,4 +45,8 @@ int      regalloc_nregs(void);
 
 extern int cc_libc_mode;
 
+
+#ifdef __cplusplus
+}
+#endif
 #endif

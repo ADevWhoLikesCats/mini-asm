@@ -1,5 +1,10 @@
 #ifndef IR_H
 #define IR_H
+
+#ifdef __cplusplus
+extern "C" {
+#endif
+
 #include <stdint.h>
 #include <stdbool.h>
 #include <stdlib.h>
@@ -80,4 +85,11 @@ int    ir_fpimm_add(double d);
 double ir_fpimm_get(int idx);
 int    ir_fpimm_count(void);
 
+
+#ifdef __cplusplus
+}
 #endif
+
+#endif
+
+
